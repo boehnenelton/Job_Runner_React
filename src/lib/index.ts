@@ -54,3 +54,13 @@ export type { CreateManifestOptions as MFDBCreateManifestOptions } from "./lib_b
 
 // Schema management
 export * from "./lib_bejson_Core_bejson_schema";
+
+// AI Family Libraries & Plugin Engine
+export * from "./lib_bejson_AI_bejson_errors";
+export * from "./lib_bejson_AI_engine";
+
+// Job Family Libraries
+export * from "./lib_bejson_Job_bejson_errors";
+export * from "./lib_bejson_Job_bejson_validators";
+export * from "./lib_bejson_Job_bejson_core";
+

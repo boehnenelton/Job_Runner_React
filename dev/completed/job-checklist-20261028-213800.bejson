@@ -1,0 +1,100 @@
+{
+  "Format": "BEJSON",
+  "Format_Version": "104a",
+  "Format_Creator": "Elton Boehnen",
+  "Schema_Name": "Job Schema",
+  "Schema_Version": "1.0",
+  "Schema_Description": "Custom job schema for the NewAgent task creation and tracking system, managing individual task states and optional auditing. Each task carries its own task_context (embedded, chunked files), task_reference (path-only refs), and task_mandatory (marks a task as a required, built-in step for the job's Job_Type/Job_Subtype). Job_Type/Job_Subtype classify the job; Contextualize_Plan/Contextualize_Last control what each task is injected with at run time. Also reused unmodified as the Template payload shape.",
+  "Job_Goal": "Implement 1:1 TypeScript AI Family Libraries (lib_bejson_AI_engine.ts, lib_bejson_AI_bejson_errors.ts) and JS mirrors with True/False gated plugin system and passive extension rule binding.",
+  "Goal_Rules": "Strict compliance with Tri-Color Palette, zero fluff, Elton Boehnen Core BEJSON immutability, solid numeric versioning 3.1.14 / package 111, and 100% vanilla JS parity in /js.",
+  "Job_Type": "feature",
+  "Job_Subtype": "typescript_ai_plugin_gate",
+  "Contextualize_Plan": true,
+  "Contextualize_Last": true,
+  "Job_Complete": true,
+  "Creation_Date": "2026-10-28",
+  "Completion_Date": "2026-10-28",
+  "Records_Type": [
+    "JobTask"
+  ],
+  "Fields": [
+    { "name": "task_id", "type": "string" },
+    { "name": "task_order", "type": "integer" },
+    { "name": "task_name", "type": "string" },
+    { "name": "task_description", "type": "string" },
+    { "name": "task_completed", "type": "boolean" },
+    { "name": "audit_enabled", "type": "boolean" },
+    { "name": "audit_passed", "type": "boolean" },
+    { "name": "audit_fail_reason", "type": "string" },
+    { "name": "task_context", "type": "array" },
+    { "name": "task_reference", "type": "array" },
+    { "name": "task_mandatory", "type": "boolean" }
+  ],
+  "Values": [
+    [
+      "task-ai-gate-01",
+      1,
+      "Author TypeScript AI Family Libraries and Error Registry",
+      "Created lib_bejson_AI_bejson_errors.ts (Family AI error codes 200-229) and lib_bejson_AI_engine.ts for plugin gate rule binding and evaluation.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["src/lib/lib_bejson_AI_bejson_errors.ts", "src/lib/lib_bejson_AI_engine.ts"],
+      true
+    ],
+    [
+      "task-ai-gate-02",
+      2,
+      "Create Vanilla JavaScript Mirrored AI Libraries",
+      "Created mirrored JS libraries in src/lib/lib_js/lib_bejson_AI_bejson_errors.js and src/lib/lib_js/lib_bejson_AI_engine.js with zero Node dependencies.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["src/lib/lib_js/lib_bejson_AI_bejson_errors.js", "src/lib/lib_js/lib_bejson_AI_engine.js"],
+      true
+    ],
+    [
+      "task-ai-gate-03",
+      3,
+      "Integrate Plugin Gate Endpoints and Prompt Assembler",
+      "Updated assembleJobPrompt in Runner engine and server.ts with /api/jobs/plugin-gate endpoint to evaluate gate state and bind rules to system instructions.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["src/lib/lib_bejson_Runner_engine.ts", "server.ts"],
+      true
+    ],
+    [
+      "task-ai-gate-04",
+      4,
+      "Surface AI Plugin Gate Controls and Schemas in React & Vanilla JS UI",
+      "Added AI Plugin & Extension Rules Gate section with True/False toggle and bound rule directives in App.tsx and js/index.html, registered ai_plugin_gate_rules.104a.bejson in Assets tab.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["src/App.tsx", "js/index.html", "js/app.js"],
+      true
+    ],
+    [
+      "task-ai-gate-05",
+      5,
+      "Audit Ledgers & Bump Version Stamps",
+      "Bumped bejson_project.json to v3.1.14 / Package 111, updated dev/ui-notes.md, verified compilation and lints.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["bejson_project.json", "dev/ui-notes.md"],
+      true
+    ]
+  ]
+}

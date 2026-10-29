@@ -47,6 +47,13 @@ import {
   buildSpreadsheetAnalogySystemInstruction,
   diagnoseValidationFailure,
 } from "./src/lib/lib_bejson_Runner_generator";
+import {
+  evaluatePluginGate,
+  createDefaultPluginGateConfig,
+  bindExtensionRulesToPrompt,
+  buildPluginGateBEJSONSchema,
+  AIPluginGateConfig,
+} from "./src/lib/lib_bejson_AI_engine";
 
 dotenv.config();
 
@@ -161,7 +168,8 @@ function syncRegistryFromDisk(): any {
       try {
         const raw = fs.readFileSync(absPath, "utf-8");
         const doc = parse(raw);
-        if (Array.isArray(doc.Records_Type) && doc.Records_Type[0] === "JobSchema") {
+        const recType = Array.isArray(doc.Records_Type) ? doc.Records_Type[0] : "";
+        if (recType === "JobTask" || recType === "JobSchema") {
           const entryName = (doc as any)["Job_Name"] || path.basename(rel, path.extname(rel)).replace(/[_-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
           const slug = path.basename(rel, path.extname(rel)).toLowerCase().replace(/[^a-z0-9]/g, "_");
           const row = [
@@ -354,12 +362,22 @@ async function startServer() {
         originalCode = fs.readFileSync(resolvedTarget, "utf-8");
       }
 
-      // Assemble prompt
+      // Assemble prompt with bound plugin gate rules
       const attachedFiles = req.body.attached_files || [];
-      const { systemInstruction, userPrompt } = assembleJobPrompt(jobDoc, activeTask, lastOutput, attachedFiles);
+      const { systemInstruction, userPrompt } = assembleJobPrompt(jobDoc, activeTask, lastOutput, attachedFiles, currentPluginGateConfig);
       const turnPrompt = `${userPrompt}\n\n### EXISTING FILE CONTENTS (${path.basename(resolvedTarget)}):\n\`\`\`\n${originalCode}\n\`\`\`${
         custom_prompt ? `\n\n### ADDITIONAL USER INSTRUCTION:\n${custom_prompt}` : ""
       }`;
+
+      // Evaluate AI Plugin Gate (True / False)
+      const gateCheck = evaluatePluginGate(currentPluginGateConfig, turnPrompt);
+      if (!gateCheck.allowed) {
+        return res.status(403).json({
+          ok: false,
+          error: gateCheck.reason || "AI execution blocked by Plugin Gate.",
+          error_code: gateCheck.errorCode,
+        });
+      }
 
       // Synchronous Prompt Archiving (Section 3.3 & 11.2)
       try {
@@ -391,10 +409,11 @@ async function startServer() {
       chosenModel = model || (jobDoc as any)["Selected_Model"] || DEFAULT_MODEL;
       let aiResponse;
       let synthesizedText = "";
-      let fallbackChain: string[] = [chosenModel];
-      if (chosenModel !== "gemini-3.5-flash-lite") fallbackChain.push("gemini-3.5-flash-lite");
-      if (chosenModel !== "gemini-3.6-flash") fallbackChain.push("gemini-3.6-flash");
-      if (chosenModel !== "gemini-2.5-flash") fallbackChain.push("gemini-2.5-flash");
+      const preferredModels = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+      const fallbackChain: string[] = [chosenModel];
+      for (const m of preferredModels) {
+        if (!fallbackChain.includes(m)) fallbackChain.push(m);
+      }
 
       let lastModelError: Error | null = null;
       let modelUsed = chosenModel;
@@ -636,6 +655,29 @@ async function startServer() {
   });
 
   // ---------------------------------------------------------------------------
+  // API: AI Plugin Gate & Extension Rules Management
+  // ---------------------------------------------------------------------------
+
+  let currentPluginGateConfig: AIPluginGateConfig = createDefaultPluginGateConfig();
+
+  app.get("/api/jobs/plugin-gate", (_req: Request, res: Response) => {
+    const doc = buildPluginGateBEJSONSchema(currentPluginGateConfig);
+    res.json({ ok: true, config: currentPluginGateConfig, bejson_doc: doc });
+  });
+
+  app.post("/api/jobs/plugin-gate", (req: Request, res: Response) => {
+    const { gate_enabled, passively_accept_rules, rules, extension_name, strict_mode } = req.body;
+    if (typeof gate_enabled === "boolean") currentPluginGateConfig.gateEnabled = gate_enabled;
+    if (typeof passively_accept_rules === "boolean") currentPluginGateConfig.passivelyAcceptRules = passively_accept_rules;
+    if (typeof strict_mode === "boolean") currentPluginGateConfig.strictMode = strict_mode;
+    if (extension_name) currentPluginGateConfig.extensionName = extension_name;
+    if (Array.isArray(rules)) currentPluginGateConfig.customRules = rules;
+
+    const doc = buildPluginGateBEJSONSchema(currentPluginGateConfig);
+    res.json({ ok: true, config: currentPluginGateConfig, bejson_doc: doc });
+  });
+
+  // ---------------------------------------------------------------------------
   // API: AI Job Generator with Spreadsheet Analogies & Self-Correcting Loop
   // ---------------------------------------------------------------------------
 
@@ -706,38 +748,35 @@ async function startServer() {
 
       try {
         let aiResponse;
-        try {
-          aiResponse = await ai.models.generateContent({
-            model: chosenModel,
-            contents: userTurnPrompt,
-            config: {
-              systemInstruction,
-              responseMimeType: "application/json",
-              temperature: 0.2,
-            },
-          });
-        } catch (sdkErr: any) {
-          const errMsg = String(sdkErr.message || "").toLowerCase();
-          const isQuotaErr = errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("exhausted") || errMsg.includes("429") || errMsg.includes("overloaded");
-          if (isQuotaErr && chosenModel !== "gemini-3.5-flash-lite") {
-            console.warn(`[Gemini SDK] Rate limit hit on model ${chosenModel} during generation. Degrading automatically to gemini-3.5-flash-lite and retrying...`);
-            try {
-              chosenModel = "gemini-3.5-flash-lite";
-              aiResponse = await ai.models.generateContent({
-                model: chosenModel,
-                contents: userTurnPrompt,
-                config: {
-                  systemInstruction,
-                  responseMimeType: "application/json",
-                  temperature: 0.2,
-                },
-              });
-            } catch (retryErr: any) {
-              throw new Error(`Job generation failed on original model and fallback model gemini-3.5-flash-lite: ${retryErr.message}`);
+        const genFallbackModels = [chosenModel, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+        const triedModels: string[] = [];
+        let genErr: any = null;
+
+        for (const candModel of genFallbackModels) {
+          if (triedModels.includes(candModel)) continue;
+          triedModels.push(candModel);
+          try {
+            aiResponse = await ai.models.generateContent({
+              model: candModel,
+              contents: userTurnPrompt,
+              config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                temperature: 0.2,
+              },
+            });
+            if (aiResponse && aiResponse.text) {
+              chosenModel = candModel;
+              break;
             }
-          } else {
-            throw sdkErr;
+          } catch (sdkErr: any) {
+            genErr = sdkErr;
+            console.warn(`[Gemini SDK] Generation attempt on model ${candModel} failed: ${sdkErr.message}. Attempting fallback if available...`);
           }
+        }
+
+        if (!aiResponse || !aiResponse.text) {
+          throw new Error(`Job generation failed across attempted models (${triedModels.join(", ")}): ${genErr ? genErr.message : "Empty model response"}`);
         }
 
         const rawText = aiResponse.text || "{}";

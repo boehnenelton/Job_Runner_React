@@ -3,22 +3,22 @@
  * Family:          Runner
  * Module Purpose:  API key management, BEJSON 104a key store schema, and round-robin key rotation.
  * Architecture:    Browser-only BEJSON 104a key store with up to 20 slots and round-robin dispatch.
- * Version:         3.1.6
+ * Version:         3.1.7
  * Release_Version: 300
- * Date:            2026-09-27
+ * Date:            2026-10-02
  * Author:          Elton Boehnen · boehnenelton2024@gmail.com · boehnenelton2024.pages.dev · github.com/boehnenelton
  * Format_Creator:  Elton Boehnen
- * RELATIONAL_ID:   b199842a-a9e2-4917-8149-16013a2901cd
+ * RELATIONAL_ID:   c8914b21-419a-4c28-9842-17b80a12cf92
  */
 
 import { BEJSONDocument } from "./lib_bejson_Core_bejson_types";
 import { bejson_core_get_field_map } from "./lib_bejson_Core_bejson_field_map";
 
 export const SUPPORTED_GEMINI_MODELS = [
+  "gemini-3.8-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.7-flash",
-  "gemini-3.8-flash",
   "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-3-flash-preview",
@@ -27,7 +27,7 @@ export const SUPPORTED_GEMINI_MODELS = [
 ] as const;
 
 export type SupportedGeminiModel = typeof SUPPORTED_GEMINI_MODELS[number];
-export const DEFAULT_MODEL: SupportedGeminiModel = "gemini-3.6-flash";
+export const DEFAULT_MODEL: SupportedGeminiModel = "gemini-3.8-flash";
 
 export const KEY_STORE_FIELDS = [
   { name: "slot_index", type: "integer" },

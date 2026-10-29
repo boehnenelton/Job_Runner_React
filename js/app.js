@@ -28,6 +28,12 @@ import {
   DEFAULT_MODEL,
 } from "../src/lib/lib_js/lib_bejson_Runner_keys.js";
 
+import {
+  createDefaultPluginGateConfig,
+  bindExtensionRulesToPrompt,
+  buildPluginGateBEJSONSchema,
+} from "../src/lib/lib_js/lib_bejson_AI_engine.js";
+
 let currentEntryId = null;
 let currentJobDoc = null;
 let currentStageId = null;
@@ -35,6 +41,7 @@ let keyStoreDoc = createEmptyKeyStoreDoc();
 let activeTab = "hub";
 let currentPanelType = "context";
 let attachedFilesList = [];
+let pluginGateConfig = createDefaultPluginGateConfig();
 
 let consoleLogs = (() => {
   try {
@@ -855,6 +862,130 @@ window.renderConsoleLogs = function () {
     .join("");
 };
 
+window.renderPluginGateUI = function () {
+  const container = document.getElementById("jsPluginRulesContainer");
+  if (!container) return;
+
+  const cbGate = document.getElementById("jsGateEnabledCb");
+  const cbPassive = document.getElementById("jsPassiveAcceptCb");
+  const inputExt = document.getElementById("jsExtensionNameInput");
+
+  if (cbGate) cbGate.checked = pluginGateConfig.gateEnabled;
+  if (cbPassive) cbPassive.checked = pluginGateConfig.passivelyAcceptRules;
+  if (inputExt) inputExt.value = pluginGateConfig.extensionName;
+
+  container.innerHTML = (pluginGateConfig.customRules || [])
+    .map((rule, idx) => `
+      <div style="border:1px solid #000;padding:10px;background:#FAFAFA;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;font-weight:700;margin:0;">
+            <input type="checkbox" id="ruleActiveCb_${idx}" ${rule.active ? "checked" : ""} onchange="window.updateRuleActiveUI(${idx})">
+            <span>${escapeHtml(rule.ruleName)}</span>
+          </label>
+          <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;color:var(--red);font-family:monospace;">${rule.ruleType}</span>
+        </div>
+        <input type="text" id="ruleDirectiveInput_${idx}" value="${escapeHtml(rule.directive)}" style="width:100%;padding:4px 6px;border:1px solid #CCC;font-size:0.75rem;font-family:monospace;box-sizing:border-box;" onchange="window.updateRuleDirectiveUI(${idx})">
+      </div>
+    `).join("");
+};
+
+window.updateRuleActiveUI = function (idx) {
+  const cb = document.getElementById(`ruleActiveCb_${idx}`);
+  if (cb && pluginGateConfig.customRules[idx]) {
+    pluginGateConfig.customRules[idx].active = cb.checked;
+  }
+};
+
+window.updateRuleDirectiveUI = function (idx) {
+  const input = document.getElementById(`ruleDirectiveInput_${idx}`);
+  if (input && pluginGateConfig.customRules[idx]) {
+    pluginGateConfig.customRules[idx].directive = input.value;
+  }
+};
+
+window.savePluginGateConfigUI = async function () {
+  const cbGate = document.getElementById("jsGateEnabledCb");
+  const cbPassive = document.getElementById("jsPassiveAcceptCb");
+  const inputExt = document.getElementById("jsExtensionNameInput");
+
+  if (cbGate) pluginGateConfig.gateEnabled = cbGate.checked;
+  if (cbPassive) pluginGateConfig.passivelyAcceptRules = cbPassive.checked;
+  if (inputExt) pluginGateConfig.extensionName = inputExt.value;
+
+  try {
+    const res = await fetch("/api/jobs/plugin-gate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        gate_enabled: pluginGateConfig.gateEnabled,
+        passively_accept_rules: pluginGateConfig.passivelyAcceptRules,
+        extension_name: pluginGateConfig.extensionName,
+        rules: pluginGateConfig.customRules,
+      }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      setStatus(`AI Plugin Gate updated (Gate: ${pluginGateConfig.gateEnabled ? "TRUE" : "FALSE"}).`);
+      window.renderPluginGateUI();
+    }
+  } catch (err) {
+    setStatus(`Error saving plugin gate: ${err.message}`);
+  }
+};
+
+let registeredJsAssets = [];
+
+window.switchAboutTab = async function (tabNum) {
+  for (let i = 1; i <= 4; i++) {
+    const view = document.getElementById(`aboutTab${i}View`);
+    const btn = document.getElementById(`tabBtn${i}`);
+    if (view) view.style.display = i === tabNum ? "block" : "none";
+    if (btn) {
+      btn.className = i === tabNum ? "jm-btn jm-btn--red" : "jm-btn";
+    }
+  }
+
+  if (tabNum === 2) {
+    try {
+      const res = await fetch("/bejson_project.json");
+      if (res.ok) {
+        const json = await res.json();
+        const changelogEl = document.getElementById("aboutChangelogView");
+        if (changelogEl) {
+          changelogEl.textContent = json.Values?.[0]?.[25] || JSON.stringify(json, null, 2);
+        }
+      }
+    } catch (_) {}
+  } else if (tabNum === 3) {
+    try {
+      const res = await fetch("/api/schemas/assets");
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.assets)) {
+        registeredJsAssets = data.assets;
+        const select = document.getElementById("aboutAssetSelect");
+        if (select) {
+          select.innerHTML = data.assets
+            .map((a) => `<option value="${a.id}">${escapeHtml(a.name)} (${a.filename})</option>`)
+            .join("");
+          window.switchAssetView();
+        }
+      }
+    } catch (_) {}
+  }
+};
+
+window.switchAssetView = function () {
+  const select = document.getElementById("aboutAssetSelect");
+  const body = document.getElementById("aboutAssetBody");
+  if (!select || !body) return;
+  const item = registeredJsAssets.find((a) => a.id === select.value);
+  if (item) {
+    body.textContent = JSON.stringify(item.doc, null, 2);
+  } else {
+    body.textContent = "{}";
+  }
+};
+
 // Global hooks for inline event handlers
 window.loadSelectedJob = loadSelectedJob;
 window.runNextTask = runNextTask;
@@ -865,5 +996,11 @@ window.handleJsSingleFile = handleJsSingleFile;
 window.handleJsFolder = handleJsFolder;
 window.handleJsZip = handleJsZip;
 window.renderConsoleLogs = window.renderConsoleLogs;
+window.switchAboutTab = window.switchAboutTab;
+window.switchAssetView = window.switchAssetView;
 
-document.addEventListener("DOMContentLoaded", initApp);
+document.addEventListener("DOMContentLoaded", () => {
+  initApp();
+  window.renderPluginGateUI();
+});
+

@@ -2,15 +2,21 @@
   "Format": "BEJSON",
   "Format_Version": "104a",
   "Format_Creator": "Elton Boehnen",
-  "Records_Type": [
-    "JobSchema"
-  ],
-  "Job_Name": "TypeScript Library Mirroring",
+  "Schema_Name": "Job Schema",
+  "Schema_Version": "1.0",
+  "Schema_Description": "Custom job schema for the NewAgent task creation and tracking system, managing individual task states and optional auditing. Each task carries its own task_context (embedded, chunked files), task_reference (path-only refs), and task_mandatory (marks a task as a required, built-in step for the job's Job_Type/Job_Subtype). Job_Type/Job_Subtype classify the job; Contextualize_Plan/Contextualize_Last control what each task is injected with at run time.",
   "Job_Goal": "Ensure 1:1 functional vanilla JavaScript parity across all application libraries in src/lib/lib_js/.",
-  "Job_Complete": false,
+  "Job_Type": "library",
+  "Job_Subtype": "typescript_js_mirror",
   "Target_File": "src/lib/lib_bejson_Runner_engine.ts",
-  "Contextualize_Plan": true,
-  "Contextualize_Last": true,
+  "Contextualize_Plan": false,
+  "Contextualize_Last": false,
+  "Job_Complete": false,
+  "Creation_Date": "2026-08-14",
+  "Completion_Date": "",
+  "Records_Type": [
+    "JobTask"
+  ],
   "Fields": [
     { "name": "task_id", "type": "string" },
     { "name": "task_order", "type": "integer" },
@@ -20,8 +26,8 @@
     { "name": "audit_enabled", "type": "boolean" },
     { "name": "audit_passed", "type": "boolean" },
     { "name": "audit_fail_reason", "type": "string" },
-    { "name": "task_context", "type": "string" },
-    { "name": "task_reference", "type": "string" },
+    { "name": "task_context", "type": "array" },
+    { "name": "task_reference", "type": "array" },
     { "name": "task_mandatory", "type": "boolean" },
     { "name": "test_cmd", "type": "string" }
   ],
@@ -35,8 +41,8 @@
       true,
       true,
       "",
-      "[]",
-      "[]",
+      [],
+      [],
       true,
       ""
     ],
@@ -49,8 +55,8 @@
       true,
       false,
       "",
-      "[]",
-      "[]",
+      [],
+      [],
       true,
       ""
     ]

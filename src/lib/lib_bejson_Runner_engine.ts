@@ -13,6 +13,11 @@
 
 import { BEJSONDocument } from "./lib_bejson_Core_bejson_types";
 import { bejson_core_get_field_map } from "./lib_bejson_Core_bejson_field_map";
+import {
+  AIPluginGateConfig,
+  bindExtensionRulesToPrompt,
+  DEFAULT_AI_EXTENSION_RULES,
+} from "./lib_bejson_AI_engine";
 
 export interface JobTaskItem {
   taskId: string;
@@ -131,40 +136,100 @@ export function assembleJobPrompt(
   jobDoc: BEJSONDocument,
   activeTask: JobTaskItem,
   lastOutput: string,
-  attachedFiles?: AttachedFile[]
+  attachedFiles?: AttachedFile[],
+  pluginConfig?: AIPluginGateConfig
 ): { systemInstruction: string; userPrompt: string } {
-  const systemInstruction =
+  const baseSystemInstruction =
     "You are an expert autonomous code architect. Apply surgical modifications to the target file to satisfy the active task instructions. Return strictly the complete, valid, updated code without markdown wrappers or conversational filler.";
+
+  const activePluginConfig: AIPluginGateConfig =
+    pluginConfig ||
+    (jobDoc as any)["Plugin_Gate_Config"] || {
+      gateEnabled: Boolean((jobDoc as any)["Plugin_Gate_Enabled"] ?? true),
+      passivelyAcceptRules: Boolean((jobDoc as any)["Passively_Accept_Rules"] ?? true),
+      extensionName: String((jobDoc as any)["Extension_Name"] || "BEJSON System Rules Extension v1.0"),
+      strictMode: Boolean((jobDoc as any)["Strict_Mode"] ?? true),
+      allowModelOverride: true,
+      customRules: DEFAULT_AI_EXTENSION_RULES,
+    };
+
+  const { finalSystemInstruction } = bindExtensionRulesToPrompt(
+    baseSystemInstruction,
+    "",
+    activePluginConfig
+  );
 
   const parts: string[] = [];
 
+  // 1. Job Goal
+  const goal = String((jobDoc as any)["Job_Goal"] || "").trim();
+  parts.push(`### JOB GOAL\n${goal || "Perform requested updates."}`);
+
+  // 2. Job Type / Job Subtype
+  const jt = String((jobDoc as any)["Job_Type"] || "").trim();
+  const jst = String((jobDoc as any)["Job_Subtype"] || "").trim();
+  if (jt || jst) {
+    parts.push(`### JOB TYPE\n${jt}${jst ? " / " + jst : ""}`);
+  }
+
+  // 3. Full Plan Scope (Contextualize_Plan)
   if ((jobDoc as any)["Contextualize_Plan"]) {
-    parts.push(`### GLOBAL JOB GOAL\n${(jobDoc as any)["Job_Goal"] || "Perform requested updates."}`);
     const tasks = extractTasksFromJobDoc(jobDoc);
-    const scope = tasks
-      .map((t) => `- Step ${t.taskOrder}: ${t.taskName} [${t.taskCompleted ? "DONE" : "PENDING"}]`)
-      .join("\n");
-    parts.push(`### FULL PLAN SCOPE\n${scope}`);
+    const planLines: string[] = [];
+    for (const t of tasks) {
+      const mark = t.taskId === activeTask.taskId ? "  <-- ACTIVE" : "";
+      const state = t.taskCompleted ? "done" : "pending";
+      planLines.push(`${t.taskOrder}. ${t.taskName} [${state}]${mark}`);
+      if (t.taskDescription && t.taskId !== activeTask.taskId) {
+        planLines.push(`   ${t.taskDescription}`);
+      }
+    }
+    parts.push(`### FULL PLAN\n${planLines.join("\n")}`);
   }
 
-  if ((jobDoc as any)["Contextualize_Last"] && lastOutput) {
-    parts.push(`### PREVIOUS TASK OUTPUT / TRACEBACK\n${lastOutput}`);
+  // 4. Previous Task Output (Contextualize_Last)
+  if ((jobDoc as any)["Contextualize_Last"] && lastOutput && lastOutput.trim()) {
+    parts.push(`### PREVIOUS TASK OUTPUT\n${lastOutput.trim()}`);
   }
 
-  parts.push(`### ACTIVE TASK ${activeTask.taskOrder}: ${activeTask.taskName}\n${activeTask.taskDescription}`);
+  // 5. Active Task
+  parts.push(`### ACTIVE TASK ${activeTask.taskOrder}: ${activeTask.taskName}\n${activeTask.taskDescription}`.trim());
 
-  // Built-in task context chunks
+  // 6. Built-in Task Context Chunks
+  const ctxParts: string[] = [];
   if (activeTask.taskContext && activeTask.taskContext.length > 0) {
     for (const ctx of activeTask.taskContext) {
-      if (ctx && ctx.text_based && Array.isArray(ctx.chunks)) {
-        for (const ch of ctx.chunks) {
-          parts.push(`### CONTEXT CHUNK (${ch.chunk_label || "context"}):\n${ch.chunk_content || ""}`);
+      if (typeof ctx === "string") {
+        ctxParts.push(ctx);
+        continue;
+      }
+      if (ctx && typeof ctx === "object") {
+        const ref = String(ctx.ref || "");
+        if (ref) ctxParts.push(`#### [Context file: ${ref}]`);
+        if (Array.isArray(ctx.chunks)) {
+          for (const ch of ctx.chunks) {
+            const body = String(ch.chunk_content || "").trim();
+            if (body) ctxParts.push(body);
+          }
         }
       }
     }
   }
+  if (ctxParts.length > 0) {
+    parts.push(`### TASK CONTEXT (study material; do not repeat it back)\n${ctxParts.join("\n\n")}`);
+  }
 
-  // User Attachments: Context Files (Read-Only Study) vs Work Attachments (Direct Task Work)
+  // 7. Task References
+  if (activeTask.taskReference && activeTask.taskReference.length > 0) {
+    const refs = activeTask.taskReference
+      .map((r) => (typeof r === "object" && r !== null ? String(r.ref || "") : String(r || "")))
+      .filter((r) => r && r !== "None");
+    if (refs.length > 0) {
+      parts.push(`### TASK REFERENCES (paths only)\n${refs.map((r) => `- ${r}`).join("\n")}`);
+    }
+  }
+
+  // 8. User Attachments
   if (attachedFiles && attachedFiles.length > 0) {
     const activeContextFiles = attachedFiles.filter((f) => f.type === "context" && f.isChecked);
     const activeWorkFiles = attachedFiles.filter((f) => f.type === "work" && f.isChecked);
@@ -174,7 +239,7 @@ export function assembleJobPrompt(
         (f) => `#### [Context File: ${f.name} | Path: ${f.path}]\n${f.content}`
       );
       parts.push(
-        `### READ-ONLY CONTEXT STUDY MATERIAL (FOR AI STUDY & LEARNING ONLY - DO NOT REPLICATE OR OVERWRITE):\n${contextBlocks.join("\n\n")}`
+        `### READ-ONLY CONTEXT STUDY MATERIAL:\n${contextBlocks.join("\n\n")}`
       );
     }
 
@@ -183,12 +248,15 @@ export function assembleJobPrompt(
         (f) => `#### [Work File: ${f.name} | Path: ${f.path}]\n${f.content}`
       );
       parts.push(
-        `### WORK ATTACHMENTS (FILES FOR ACTIVE TASK EXECUTION & REFACTORING):\n${workBlocks.join("\n\n")}`
+        `### WORK ATTACHMENTS (FILES FOR ACTIVE TASK EXECUTION):\n${workBlocks.join("\n\n")}`
       );
     }
   }
 
-  return { systemInstruction, userPrompt: parts.join("\n\n") };
+  // 9. Closing Instruction
+  parts.push("### INSTRUCTION\nComplete the active task now and return only its deliverable.");
+
+  return { systemInstruction: finalSystemInstruction, userPrompt: parts.join("\n\n") };
 }
 
 /**

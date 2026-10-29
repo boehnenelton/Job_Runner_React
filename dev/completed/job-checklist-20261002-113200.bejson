@@ -1,0 +1,87 @@
+{
+  "Format": "BEJSON",
+  "Format_Version": "104a",
+  "Format_Creator": "Elton Boehnen",
+  "Schema_Name": "Job Schema",
+  "Schema_Version": "1.0",
+  "Schema_Description": "Custom job schema for the NewAgent task creation and tracking system, managing individual task states and optional auditing. Each task carries its own task_context (embedded, chunked files), task_reference (path-only refs), and task_mandatory (marks a task as a required, built-in step for the job's Job_Type/Job_Subtype). Job_Type/Job_Subtype classify the job; Contextualize_Plan/Contextualize_Last control what each task is injected with at run time. Also reused unmodified as the Template payload shape.",
+  "Job_Goal": "Purge deprecated gemini-2.5-flash model reference (HTTP 404 NOT_FOUND) and upgrade primary runtime and fallback degradation chains to gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash-lite, and gemini-3.1-flash-lite.",
+  "Goal_Rules": "Strict compliance with Tri-Color Palette, zero fluff, Elton Boehnen Core BEJSON immutability, solid numeric versioning 3.1.13 / package 110, and 100% vanilla JS parity in /js.",
+  "Job_Type": "fix",
+  "Job_Subtype": "gemini_model_upgrade",
+  "Contextualize_Plan": true,
+  "Contextualize_Last": true,
+  "Job_Complete": true,
+  "Creation_Date": "2026-10-02",
+  "Completion_Date": "2026-10-02",
+  "Records_Type": [
+    "JobTask"
+  ],
+  "Fields": [
+    { "name": "task_id", "type": "string" },
+    { "name": "task_order", "type": "integer" },
+    { "name": "task_name", "type": "string" },
+    { "name": "task_description", "type": "string" },
+    { "name": "task_completed", "type": "boolean" },
+    { "name": "audit_enabled", "type": "boolean" },
+    { "name": "audit_passed", "type": "boolean" },
+    { "name": "audit_fail_reason", "type": "string" },
+    { "name": "task_context", "type": "array" },
+    { "name": "task_reference", "type": "array" },
+    { "name": "task_mandatory", "type": "boolean" }
+  ],
+  "Values": [
+    [
+      "task-fix-model-01",
+      1,
+      "Purge Deprecated gemini-2.5-flash from server.ts Fallback Chain",
+      "Remove gemini-2.5-flash which causes 404 NOT_FOUND and update fallback degradation chain to prioritize gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash-lite, and gemini-3.1-flash-lite.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["server.ts"],
+      true
+    ],
+    [
+      "task-fix-model-02",
+      2,
+      "Update DEFAULT_MODEL in Key Libraries and Vanilla JS Mirrors",
+      "Set DEFAULT_MODEL to gemini-3.8-flash in lib_bejson_Runner_keys.ts and lib_bejson_Runner_keys.js, ensuring supported model arrays prioritize modern Gemini 3.8/3.6 models.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["src/lib/lib_bejson_Runner_keys.ts", "src/lib/lib_js/lib_bejson_Runner_keys.js"],
+      true
+    ],
+    [
+      "task-fix-model-03",
+      3,
+      "Harden Job Generation Endpoint Against Model Outages",
+      "Implement multi-model fallback chain in /api/jobs/generate so that if one model hits quota or transient error, subsequent models in the chain automatically retry.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["server.ts"],
+      true
+    ],
+    [
+      "task-fix-model-04",
+      4,
+      "Audit Ledgers & Bump Version Stamps",
+      "Bump bejson_project.json to v3.1.13 / Package 110, update App.tsx and js/index.html, and verify compilation and lints.",
+      true,
+      true,
+      true,
+      "",
+      [],
+      ["bejson_project.json", "src/App.tsx", "js/index.html"],
+      true
+    ]
+  ]
+}

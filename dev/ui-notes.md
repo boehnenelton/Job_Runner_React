@@ -56,3 +56,9 @@ RELATIONAL_ID: 28bc94a1-0294-4d82-b7e1-88941cfb2190
 - **Derived Page Inheritance**: Derive all subsequent pages (Index/Landing, Feed/Catalog, Features, About, Contact) from the master layout template to preserve visual coherence and layout integrity.
 - **Sequential Context Feeding**: Just as in sequential creative novel pipelines, each web page task inherits the master template and previous page code as recursive context so navigation links and tokens are strictly maintained.
 - **Terminal Hyperlink Integrity Audit**: Conclude every multi-page website job with an automated audit step checking that every page contains the unified navigation bar, all relative links (`index.html`, `feed.html`, `features.html`, `about.html`, `contact.html`) resolve without dead ends, active page markers reflect the current route, and mobile responsive menus behave identically.
+
+## 8. AI Plugin & Extension Rules Gate Standard (True / False On/Off Gating)
+- **Plugin Gate Architecture**: AI family libraries (`lib_bejson_AI_engine.ts`, `lib_bejson_AI_bejson_errors.ts` and mirrored JS) implement a True/False gated plugin system for job runner execution and prompt synthesis.
+- **Passive Rule Ingestion & Binding**: When `gateEnabled: true` or `passivelyAcceptRules: true`, the system passively ingests and binds rule directives (strict TypeScript type constraints, security path containment, Tri-Color style discipline, BEJSON Field Map Cache mandate) into the system instruction of every AI turn dispatch.
+- **Strict Execution Gate**: When `strictMode` is active and `gateEnabled` is True, executions are evaluated against bound extension directives before dispatching to model endpoints.
+- **Exportable Schema**: Gate configuration and bound rules are serialized into a standard BEJSON 104a schema (`ai_plugin_gate_rules.104a.bejson`) registered in the Assets tab for Copy, Download, and ZIP packaging.

@@ -81,7 +81,16 @@ import {
   KeySlotItem,
 } from "./lib/lib_bejson_Runner_keys";
 
-type MainSection = "hub" | "editor" | "runner" | "templates" | "keys" | "attachments" | "generate" | "console";
+import {
+  AIPluginGateConfig,
+  AIExtensionRule,
+  createDefaultPluginGateConfig,
+  buildPluginGateBEJSONSchema,
+  evaluatePluginGate,
+  bindExtensionRulesToPrompt,
+} from "./lib/lib_bejson_AI_engine";
+
+type MainSection = "hub" | "editor" | "runner" | "templates" | "keys" | "attachments" | "generate" | "console" | "plugin_gate";
 type ProcessingState = "No keys loaded" | "Idle" | "Sending..." | "Awaiting response..." | "Error";
 
 export interface ConsoleLogEntry {
@@ -172,12 +181,15 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Meta-UI Three-Tab Modal State
+  // Meta-UI Four-Tab Modal State (Including Documentation)
   const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
-  const [metaActiveTab, setMetaActiveTab] = useState<1 | 2 | 3>(1);
+  const [metaActiveTab, setMetaActiveTab] = useState<1 | 2 | 3 | 4>(1);
   const [registeredAssets, setRegisteredAssets] = useState<AssetSchemaItem[]>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<string>("");
   const [projectLedgerDoc, setProjectLedgerDoc] = useState<any>(null);
+
+  // AI Plugin Gate Config State
+  const [pluginGateConfig, setPluginGateConfig] = useState<AIPluginGateConfig>(() => createDefaultPluginGateConfig());
 
   // AI Job Generator State (Spreadsheet Analogy & Self-Healing Feedback Loop)
   const [genPrompt, setGenPrompt] = useState<string>("");
@@ -1283,7 +1295,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-bold tracking-tight text-sm uppercase">JobMaker</span>
             <span className="bg-[#DE2626] text-[#FFFFFF] text-xs font-mono font-bold px-1.5 py-0.5 rounded-none">
-              v3.1.12 (3112)
+              v3.1.13 (3113)
             </span>
           </div>
 
@@ -1590,6 +1602,26 @@ export default function App() {
 
             <button
               onClick={() => {
+                setActiveSection("plugin_gate");
+                setIsMobileMenuOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold rounded-none text-left cursor-pointer transition-colors ${
+                activeSection === "plugin_gate"
+                  ? "bg-[#DE2626] text-[#FFFFFF]"
+                  : "text-[#CCCCCC] hover:bg-[#1A1A1A] hover:text-[#FFFFFF]"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Shield size={16} />
+                <span>AI Plugin Gate</span>
+              </div>
+              <span className={`text-[10px] font-mono px-1.5 py-0.2 ${pluginGateConfig.gateEnabled ? "bg-[#DE2626] text-[#FFFFFF]" : "bg-[#222222] text-[#888888]"}`}>
+                {pluginGateConfig.gateEnabled ? "TRUE" : "FALSE"}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveSection("console");
                 setIsMobileMenuOpen(false);
               }}
@@ -1696,7 +1728,7 @@ export default function App() {
                 <div
                   className={`p-4 border ${
                     attachmentPanelType === "context"
-                      ? "border-[#000000] bg-[#FFFFFF]"
+                      ? "border-transparent bg-[#FFFFFF]"
                       : "border-[#DE2626] bg-[#FFFFFF]"
                   }`}
                 >
@@ -1722,7 +1754,7 @@ export default function App() {
                 </div>
 
                 {/* Import Controls: File, Folder, ZIP */}
-                <div className="border border-[#000000] p-4 bg-[#FFFFFF] space-y-3">
+                <div className="border border-transparent p-4 bg-[#FFFFFF] space-y-3">
                   <div className="text-xs font-bold uppercase tracking-wider text-[#000000]">
                     Import into {attachmentPanelType === "context" ? "Context Files" : "Work Attachments"}
                   </div>
@@ -1820,7 +1852,7 @@ export default function App() {
                   </div>
 
                   {/* Per-File Interactive Rows */}
-                  <div className="border border-[#000000] bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
+                  <div className="border border-transparent bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
                     {currentCategoryFiles.length === 0 ? (
                       <div className="p-8 text-center text-xs text-[#777777] space-y-2">
                         <UploadCloud size={28} className="mx-auto text-[#AAAAAA]" />
@@ -1950,7 +1982,7 @@ export default function App() {
 
               {hubSubTab === "list" && (
                 <div className="flex-1 p-6 overflow-y-auto space-y-6 max-w-4xl mx-auto w-full">
-                  <div className="border border-[#000000] p-4 bg-[#FFFFFF]">
+                  <div className="border border-transparent p-4 bg-[#FFFFFF]">
                     <h2 className="text-sm font-bold uppercase tracking-wider mb-2">Select Active Job</h2>
                     <p className="text-xs text-[#555555] mb-4">
                       Select a job document registered in <span className="font-mono">registry.bejson</span> or synchronized from the <span className="font-mono">jobs/</span> directory.
@@ -1989,7 +2021,7 @@ export default function App() {
                           <div
                             key={e.entry_id}
                             className={`p-4 border transition-colors ${
-                              isCurrent ? "border-[#DE2626] bg-[#FFFFFF]" : "border-[#000000] bg-[#FFFFFF]"
+                              isCurrent ? "border-[#DE2626] bg-[#FFFFFF]" : "border-transparent bg-[#FFFFFF]"
                             }`}
                           >
                             <div className="flex items-start justify-between">
@@ -2034,7 +2066,7 @@ export default function App() {
 
               {hubSubTab === "import" && (
                 <div className="flex-1 p-6 overflow-y-auto max-w-2xl mx-auto w-full">
-                  <div className="border border-[#000000] p-6 bg-[#FFFFFF] space-y-4">
+                  <div className="border border-transparent p-6 bg-[#FFFFFF] space-y-4">
                     <h2 className="text-sm font-bold uppercase tracking-wider">Import BEJSON 104a Job Document</h2>
                     <p className="text-xs text-[#555555]">
                       Upload any BEJSON 104a document (<span className="font-mono">Records_Type: ["JobSchema"]</span>).
@@ -2117,7 +2149,7 @@ export default function App() {
 
               {editorSubTab === "tasks" && (
                 <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-6 max-w-5xl mx-auto w-full">
-                  <div className="border border-[#000000] p-4 bg-[#FFFFFF] grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="border border-transparent p-4 bg-[#FFFFFF] grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold uppercase mb-1">Global Job Goal</label>
                       <textarea
@@ -2190,7 +2222,7 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="border border-[#000000] bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
+                    <div className="border border-transparent bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
                       {activeJobTasks.length === 0 ? (
                         <div className="p-8 text-center text-xs text-[#777777]">
                           No tasks loaded. Load a job from the Hub or create one from Job Templates.
@@ -2259,7 +2291,7 @@ export default function App() {
                   </div>
 
                   {activeJobTasks[selectedTaskIndex] && (
-                    <div className="border border-[#000000] p-4 bg-[#FFFFFF] space-y-3">
+                    <div className="border border-transparent p-4 bg-[#FFFFFF] space-y-3">
                       <h4 className="text-xs font-bold uppercase tracking-wider text-[#000000]">
                         Edit Step {activeJobTasks[selectedTaskIndex].taskOrder} Details
                       </h4>
@@ -2373,7 +2405,7 @@ export default function App() {
               {runnerSubTab === "staged" && (
                 <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-4 max-w-5xl mx-auto w-full flex flex-col">
                   {stagedEvolution ? (
-                    <div className="flex-1 flex flex-col border border-[#000000] bg-[#FFFFFF] p-4 space-y-4">
+                    <div className="flex-1 flex flex-col border border-transparent bg-[#FFFFFF] p-4 space-y-4">
                       <div className="flex items-center justify-between border-b border-[#000000] pb-3">
                         <div>
                           <h3 className="text-sm font-bold text-[#000000]">
@@ -2421,7 +2453,7 @@ export default function App() {
                       </div>
                     </div>
                   ) : (
-                    <div className="border border-[#000000] p-12 text-center bg-[#FFFFFF] space-y-3">
+                    <div className="border border-transparent p-12 text-center bg-[#FFFFFF] space-y-3">
                       <Layers size={36} className="mx-auto text-[#000000]" />
                       <h3 className="text-sm font-bold uppercase">No Active Mutation Staged</h3>
                       <p className="text-xs text-[#555555] max-w-md mx-auto">
@@ -2442,7 +2474,7 @@ export default function App() {
               {runnerSubTab === "traces" && (
                 <div className="flex-1 p-6 overflow-y-auto max-w-4xl mx-auto w-full">
                   <h3 className="text-xs font-bold uppercase tracking-wider mb-3">Job Execution Traces</h3>
-                  <div className="border border-[#000000] p-4 bg-[#FFFFFF]">
+                  <div className="border border-transparent p-4 bg-[#FFFFFF]">
                     {activeJobDoc && (activeJobDoc as any)["Execution_Traces"] ? (
                       <pre className="text-xs font-mono text-[#000000] whitespace-pre-wrap">
                         {JSON.stringify((activeJobDoc as any)["Execution_Traces"], null, 2)}
@@ -2486,7 +2518,7 @@ export default function App() {
                   {RUNNER_TEMPLATES.map((tmpl) => (
                     <div
                       key={tmpl.templateId}
-                      className="border border-[#000000] p-4 bg-[#FFFFFF] flex flex-col justify-between"
+                      className="border border-transparent p-4 bg-[#FFFFFF] flex flex-col justify-between"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-1.5">
@@ -2557,7 +2589,7 @@ export default function App() {
 
               {keysSubTab === "slots" && (
                 <div className="flex-1 p-6 overflow-y-auto max-w-4xl mx-auto w-full space-y-6">
-                  <div className="border border-[#000000] p-4 bg-[#FFFFFF]">
+                  <div className="border border-transparent p-4 bg-[#FFFFFF]">
                     <div className="flex items-center justify-between mb-2">
                       <h2 className="text-sm font-bold uppercase tracking-wider">
                         BEJSON 104a Browser Key Store
@@ -2571,7 +2603,7 @@ export default function App() {
                     </p>
                   </div>
 
-                  <div className="border border-[#000000] bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
+                  <div className="border border-transparent bg-[#FFFFFF] divide-y divide-[#EEEEEE]">
                     {keySlots.slice(0, 10).map((slot) => {
                       const isCurrentActive = slot.slotIndex === currentKeySlotIndex;
                       return (
@@ -2619,7 +2651,7 @@ export default function App() {
 
               {keysSubTab === "models" && (
                 <div className="flex-1 p-6 overflow-y-auto max-w-2xl mx-auto w-full space-y-4">
-                  <div className="border border-[#000000] p-6 bg-[#FFFFFF] space-y-4">
+                  <div className="border border-transparent p-6 bg-[#FFFFFF] space-y-4">
                     <h3 className="text-sm font-bold uppercase tracking-wider">
                       Google Gemini Model Selection
                     </h3>
@@ -2639,7 +2671,7 @@ export default function App() {
                               setKeyStoreDoc(cloned as any);
                             }}
                             className={`p-3 border flex items-center justify-between cursor-pointer transition-colors ${
-                              isSel ? "border-[#DE2626] bg-[#FFFFFF]" : "border-[#000000] hover:bg-[#FAFAFA]"
+                              isSel ? "border-[#DE2626] bg-[#FFFFFF]" : "border-transparent hover:bg-[#FAFAFA]"
                             }`}
                           >
                             <span className="font-mono text-xs font-bold">{m}</span>
@@ -2721,7 +2753,7 @@ export default function App() {
               {genSubTab === "create" && (
                 <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-6 max-w-4xl mx-auto w-full">
                   {/* Banner / Explanation */}
-                  <div className="border border-[#000000] p-4 bg-[#FFFFFF]">
+                  <div className="border border-transparent p-4 bg-[#FFFFFF]">
                     <div className="flex items-start gap-3">
                       <Sparkles size={22} className="text-[#DE2626] shrink-0 mt-0.5" />
                       <div>
@@ -3266,6 +3298,233 @@ export default function App() {
             </div>
           )}
 
+          {/* 8. AI PLUGIN & EXTENSION RULES GATE */}
+          {activeSection === "plugin_gate" && (
+            <div className="flex-1 flex flex-col overflow-hidden bg-[#FFFFFF]">
+              <div className="border-b border-[#000000] bg-[#FFFFFF] px-4 py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Shield size={18} className="text-[#DE2626]" />
+                  <div>
+                    <h2 className="text-xs font-bold uppercase tracking-wider text-[#000000]">
+                      AI Plugin &amp; Extension Rules Gate
+                    </h2>
+                    <p className="text-[11px] text-[#666666]">
+                      True/False gated extension system to passively accept, bind, and enforce rules on all job executions.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-1 text-xs font-mono font-bold ${pluginGateConfig.gateEnabled ? "bg-[#DE2626] text-[#FFFFFF]" : "bg-[#000000] text-[#FFFFFF]"}`}>
+                    GATE: {pluginGateConfig.gateEnabled ? "TRUE (ENABLED)" : "FALSE (DISABLED)"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex-1 p-4 md:p-6 overflow-y-auto space-y-6 max-w-4xl mx-auto w-full">
+                {/* Gate Control Toggles */}
+                <div className="border border-transparent p-5 bg-[#FFFFFF] space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#000000] border-b border-[#000000] pb-2">
+                    Gate Control Toggles &amp; Extension Binding
+                  </h3>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="flex items-start gap-3 border border-transparent p-3 bg-[#FAFAFA] cursor-pointer hover:border-[#DE2626]">
+                      <input
+                        type="checkbox"
+                        checked={pluginGateConfig.gateEnabled}
+                        onChange={(e) => {
+                          const updated = { ...pluginGateConfig, gateEnabled: e.target.checked };
+                          setPluginGateConfig(updated);
+                          fetch("/api/jobs/plugin-gate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ gate_enabled: e.target.checked }),
+                          });
+                          logAction({
+                            category: "SYSTEM",
+                            level: "INFO",
+                            title: `Plugin Gate Toggled (${e.target.checked ? "TRUE" : "FALSE"})`,
+                            summary: `Updated AI Plugin Gate state to ${e.target.checked ? "TRUE" : "FALSE"}.`,
+                          });
+                        }}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-[#000000] block">
+                          [x] Enable Plugin Gate (True / False)
+                        </span>
+                        <span className="text-[11px] text-[#555555]">
+                          When True, binds active extension rules into AI turn instructions and gates task execution.
+                        </span>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-3 border border-transparent p-3 bg-[#FAFAFA] cursor-pointer hover:border-[#DE2626]">
+                      <input
+                        type="checkbox"
+                        checked={pluginGateConfig.passivelyAcceptRules}
+                        onChange={(e) => {
+                          const updated = { ...pluginGateConfig, passivelyAcceptRules: e.target.checked };
+                          setPluginGateConfig(updated);
+                          fetch("/api/jobs/plugin-gate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ passively_accept_rules: e.target.checked }),
+                          });
+                        }}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-[#000000] block">
+                          [x] Passively Accept Extension Rules
+                        </span>
+                        <span className="text-[11px] text-[#555555]">
+                          Automatically ingests and binds rule directives transmitted from uploaded extensions.
+                        </span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-wider block mb-1">
+                        Active Extension Name
+                      </label>
+                      <input
+                        type="text"
+                        value={pluginGateConfig.extensionName}
+                        onChange={(e) => {
+                          const updated = { ...pluginGateConfig, extensionName: e.target.value };
+                          setPluginGateConfig(updated);
+                        }}
+                        className="w-full p-2 text-xs border border-[#000000] bg-[#FFFFFF] text-[#000000] rounded-none focus:outline-none"
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-2 pt-5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={pluginGateConfig.strictMode}
+                        onChange={(e) => {
+                          const updated = { ...pluginGateConfig, strictMode: e.target.checked };
+                          setPluginGateConfig(updated);
+                        }}
+                      />
+                      <span className="text-xs font-bold text-[#000000]">
+                        Strict Rule Gate Enforcement
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Bound Rules List */}
+                <div className="border border-transparent p-5 bg-[#FFFFFF] space-y-4">
+                  <div className="flex items-center justify-between border-b border-[#000000] pb-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#000000]">
+                      Active Bound Extension Directives ({pluginGateConfig.customRules.filter((r) => r.active).length}/{pluginGateConfig.customRules.length})
+                    </h3>
+                    <button
+                      onClick={() => {
+                        const newRule: AIExtensionRule = {
+                          ruleId: `rule-custom-${Date.now()}`,
+                          ruleName: "Custom User Extension Directive",
+                          ruleType: "system_directive",
+                          active: true,
+                          directive: "New custom extension directive to enforce during AI execution.",
+                        };
+                        const updated = { ...pluginGateConfig, customRules: [...pluginGateConfig.customRules, newRule] };
+                        setPluginGateConfig(updated);
+                      }}
+                      className="bg-[#DE2626] hover:bg-[#000000] text-[#FFFFFF] px-3 py-1 text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Plus size={12} />
+                      <span>Add Directive</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {pluginGateConfig.customRules.map((rule, idx) => (
+                      <div key={rule.ruleId} className="border border-transparent p-3 bg-[#FAFAFA] space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={rule.active}
+                              onChange={(e) => {
+                                const nextRules = [...pluginGateConfig.customRules];
+                                nextRules[idx].active = e.target.checked;
+                                setPluginGateConfig({ ...pluginGateConfig, customRules: nextRules });
+                              }}
+                            />
+                            <span className="text-xs font-bold text-[#000000]">{rule.ruleName}</span>
+                          </label>
+                          <span className="text-[10px] font-mono text-[#DE2626] uppercase font-bold">
+                            {rule.ruleType}
+                          </span>
+                        </div>
+
+                        <input
+                          type="text"
+                          value={rule.directive}
+                          onChange={(e) => {
+                            const nextRules = [...pluginGateConfig.customRules];
+                            nextRules[idx].directive = e.target.value;
+                            setPluginGateConfig({ ...pluginGateConfig, customRules: nextRules });
+                          }}
+                          className="w-full p-2 text-xs border border-[#CCCCCC] font-mono bg-[#FFFFFF] text-[#000000] focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch("/api/jobs/plugin-gate", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              gate_enabled: pluginGateConfig.gateEnabled,
+                              passively_accept_rules: pluginGateConfig.passivelyAcceptRules,
+                              strict_mode: pluginGateConfig.strictMode,
+                              extension_name: pluginGateConfig.extensionName,
+                              rules: pluginGateConfig.customRules,
+                            }),
+                          });
+                          const data = await res.json();
+                          if (data.ok) {
+                            setSuccessBanner("AI Plugin Gate & Extension Rules successfully saved and bound to job runner.");
+                          }
+                        } catch (err: any) {
+                          setErrorMessage(`Failed to save plugin gate: ${err.message}`);
+                        }
+                      }}
+                      className="w-full bg-[#DE2626] hover:bg-[#000000] text-[#FFFFFF] py-2 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+                    >
+                      Apply &amp; Bind Plugin Rules to Runner
+                    </button>
+                  </div>
+                </div>
+
+                {/* Prompt Preview */}
+                <div className="border border-transparent p-5 bg-[#FFFFFF] space-y-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#000000] border-b border-[#000000] pb-2">
+                    Bound System Instruction Preview
+                  </h3>
+                  <pre className="p-3 bg-[#000000] text-[#FFFFFF] font-mono text-xs overflow-auto max-h-48 whitespace-pre-wrap">
+                    {bindExtensionRulesToPrompt(
+                      "You are an expert autonomous code architect. Apply surgical modifications to the target file.",
+                      "",
+                      pluginGateConfig
+                    ).finalSystemInstruction}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 7. SYSTEM CONSOLE & ACTION AUDIT LEDGER */}
           {activeSection === "console" && (
             <div className="flex-1 flex flex-col overflow-hidden bg-[#FFFFFF]">
@@ -3410,7 +3669,7 @@ export default function App() {
               {/* Log Records Stream */}
               <div className="flex-1 p-4 overflow-y-auto space-y-3 font-mono text-xs">
                 {filteredConsoleLogs.length === 0 ? (
-                  <div className="border border-[#000000] p-8 text-center bg-[#FFFFFF]">
+                  <div className="border border-transparent p-8 text-center bg-[#FFFFFF]">
                     <Terminal size={32} className="mx-auto text-[#888888] mb-2" />
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#000000]">
                       No Console Entries Match Filter
@@ -3432,8 +3691,8 @@ export default function App() {
                           isError
                             ? "border-[#DE2626] bg-[#FFF5F5]"
                             : log.level === "WARN"
-                            ? "border-[#000000] bg-[#FFFDF0]"
-                            : "border-[#000000] bg-[#FFFFFF]"
+                            ? "border-transparent bg-[#FFFDF0]"
+                            : "border-transparent bg-[#FFFFFF]"
                         }`}
                       >
                         {/* Header Row */}
@@ -3679,11 +3938,11 @@ export default function App() {
       {/* -------------------------------------------------------------------- */}
       {isAboutModalOpen && (
         <div className="fixed inset-0 z-50 bg-[#000000]/75 flex items-center justify-center p-4">
-          <div className="bg-[#FFFFFF] border-2 border-[#000000] max-w-2xl w-full flex flex-col max-h-[85vh] shadow-2xl">
+          <div className="bg-[#FFFFFF] border-2 border-[#000000] max-w-4xl w-full flex flex-col max-h-[90vh] shadow-2xl">
             <div className="bg-[#000000] text-[#FFFFFF] px-4 py-3 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm tracking-wide uppercase">System Information &amp; Meta-UI</span>
-                <span className="text-[#DE2626] text-xs font-mono font-bold">3-Tab Standard</span>
+                <span className="text-[#DE2626] text-xs font-mono font-bold">4-Tab Architecture</span>
               </div>
               <button
                 onClick={() => setIsAboutModalOpen(false)}
@@ -3716,13 +3975,23 @@ export default function App() {
               </button>
               <button
                 onClick={() => setMetaActiveTab(3)}
-                className={`flex-1 py-2.5 text-xs font-bold text-center transition-colors cursor-pointer ${
+                className={`flex-1 py-2.5 text-xs font-bold text-center border-r border-[#DDDDDD] transition-colors cursor-pointer ${
                   metaActiveTab === 3
                     ? "bg-[#DE2626] text-[#FFFFFF]"
                     : "text-[#000000] hover:bg-[#F2F2F2]"
                 }`}
               >
                 Tab 3: Assets
+              </button>
+              <button
+                onClick={() => setMetaActiveTab(4)}
+                className={`flex-1 py-2.5 text-xs font-bold text-center transition-colors cursor-pointer ${
+                  metaActiveTab === 4
+                    ? "bg-[#DE2626] text-[#FFFFFF]"
+                    : "text-[#000000] hover:bg-[#F2F2F2]"
+                }`}
+              >
+                Tab 4: Documentation
               </button>
             </div>
 
@@ -3736,10 +4005,10 @@ export default function App() {
                     </p>
                     <div className="grid grid-cols-2 gap-2 pt-2 text-xs font-mono border-t border-[#EEEEEE]">
                       <div>
-                        <span className="text-[#888888]">Version:</span> 3.1.12 (Package 109)
+                        <span className="text-[#888888]">Version:</span> 3.1.15 (Package 112)
                       </div>
                       <div>
-                        <span className="text-[#888888]">Release Date:</span> 2026-10-02
+                        <span className="text-[#888888]">Release Date:</span> 2026-10-29
                       </div>
                     </div>
                   </div>
@@ -3794,7 +4063,7 @@ export default function App() {
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#000000]">
                       Revision History (bejson_project.json)
                     </h4>
-                    <span className="text-[11px] font-mono text-[#888888]">Current: v3.1.12</span>
+                    <span className="text-[11px] font-mono text-[#888888]">Current: v3.1.15</span>
                   </div>
 
                   <div className="border border-[#000000] p-4 bg-[#FFFFFF] font-mono text-xs text-[#222222] whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto">
@@ -3853,6 +4122,214 @@ export default function App() {
                       <Download size={13} />
                       <span>Save File</span>
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {metaActiveTab === 4 && (
+                <div className="space-y-6 text-xs text-[#111111] leading-relaxed">
+                  {/* Header Banner */}
+                  <div className="border border-[#000000] bg-[#000000] text-[#FFFFFF] p-4 space-y-1">
+                    <div className="text-[#DE2626] font-mono text-[10px] uppercase font-bold tracking-widest">
+                      SYSTEM SPECIFICATION &amp; TECHNICAL ARCHITECTURE
+                    </div>
+                    <h3 className="text-base font-extrabold uppercase text-[#FFFFFF]">
+                      JobMaker &amp; Job Runner Operating Standard (v3.1.15)
+                    </h3>
+                    <p className="text-xs text-[#DDDDDD]">
+                      Detailed specification of the Python Job Schema v1.0 standard, BEJSON 104a Field Map Cache mandates, AI Plugin Rule Gates, Multi-Page Plan-First Generation, and self-evolving stage runner workflows.
+                    </p>
+                  </div>
+
+                  {/* Section 1: The New Standard We're Setting */}
+                  <div className="space-y-3">
+                    <div className="border-b-2 border-[#000000] pb-1 flex items-center justify-between">
+                      <h4 className="font-extrabold text-xs uppercase tracking-wider text-[#DE2626] flex items-center gap-2">
+                        <span>PART 1:</span>
+                        <span>THE NEW OPERATING STANDARD WE'RE SETTING</span>
+                      </h4>
+                      <span className="font-mono text-[10px] text-[#666666]">BEJSON 104a / Python Parity</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Sub-card A: Python Job Schema v1.0 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-2">
+                        <div className="font-bold text-xs uppercase text-[#000000] flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-[#DE2626]" />
+                          <span>1. Python Job Schema v1.0 Parity</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          All job files strictly align with the canonical Python <code className="bg-[#EEEEEE] px-1 font-mono text-[#000000]">JobRunner.py</code> schema. Every record defines explicit fields without index-based positional hardcoding:
+                        </p>
+                        <ul className="list-disc list-inside text-[11px] font-mono text-[#222222] space-y-0.5 bg-[#FAFAFA] p-2 border border-[#EEEEEE]">
+                          <li>task_id, task_order, task_name</li>
+                          <li>task_description, task_completed</li>
+                          <li>audit_enabled, audit_passed, audit_fail_reason</li>
+                          <li>task_context (native array of embedded file chunks)</li>
+                          <li>task_reference (native array of file path strings)</li>
+                          <li>task_mandatory (boolean execution flag)</li>
+                        </ul>
+                      </div>
+
+                      {/* Sub-card B: Field Map Cache Mandate */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-2">
+                        <div className="font-bold text-xs uppercase text-[#000000] flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-[#DE2626]" />
+                          <span>2. Field Map Cache Mandate</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          In compliance with Elton Boehnen's Core BEJSON specification (<code className="bg-[#EEEEEE] px-1 font-mono text-[#000000]">bejson_core_get_field_map</code>), positional array indexing is strictly forbidden:
+                        </p>
+                        <div className="text-[11px] font-mono bg-[#000000] text-[#FFFFFF] p-2 space-y-1">
+                          <div className="text-[#A7F3D0]">// O(1) Dynamic Column Resolution:</div>
+                          <div>const fieldMap = bejson_core_get_field_map(doc);</div>
+                          <div>const idx = fieldMap.get("task_context");</div>
+                          <div>const contextArray = row[idx];</div>
+                        </div>
+                      </div>
+
+                      {/* Sub-card C: Spreadsheet Analogy & Self-Healing */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-2">
+                        <div className="font-bold text-xs uppercase text-[#000000] flex items-center gap-1.5">
+                          <Sparkles size={14} className="text-[#DE2626]" />
+                          <span>3. Spreadsheet Analogy &amp; Self-Healing</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          BEJSON 104a formats are modeled directly like a relational spreadsheet: <code className="bg-[#EEEEEE] px-1 font-mono">Fields</code> form fixed column headers and <code className="bg-[#EEEEEE] px-1 font-mono">Values</code> contain 2D data rows.
+                        </p>
+                        <p className="text-[11px] text-[#444444]">
+                          AI Job Generation uses an automated 3-attempt diagnostic loop. If a generated schema fails AST validation or field mapping, the feedback loop injects exact diagnostic diffs to self-heal the payload automatically.
+                        </p>
+                      </div>
+
+                      {/* Sub-card D: AI Plugin Gate System */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-2">
+                        <div className="font-bold text-xs uppercase text-[#000000] flex items-center gap-1.5">
+                          <Shield size={14} className="text-[#DE2626]" />
+                          <span>4. AI Plugin &amp; Extension Rules Gate</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          A True/False gated plugin architecture (<code className="bg-[#EEEEEE] px-1 font-mono">gate_enabled</code>, <code className="bg-[#EEEEEE] px-1 font-mono">passively_accept_rules</code>) bound to job execution and prompt assembly.
+                        </p>
+                        <p className="text-[11px] text-[#444444]">
+                          Passively ingests extension rule sets (e.g. strict type checks, no forbidden imports) and dynamically binds active directive blocks into system prompts dispatched to Gemini models.
+                        </p>
+                      </div>
+
+                      {/* Sub-card E: Multi-Page Plan-First Standard */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-2 md:col-span-2">
+                        <div className="font-bold text-xs uppercase text-[#000000] flex items-center gap-1.5">
+                          <BookOpen size={14} className="text-[#DE2626]" />
+                          <span>5. Multi-Page Plan-First Website Generation Standard</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          For multi-page websites or complex web applications, JobMaker enforces a strict 3-phase plan-first generation workflow:
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 font-mono text-[10px]">
+                          <div className="border border-[#000000] p-2 bg-[#FAFAFA]">
+                            <strong className="text-[#DE2626] block mb-1">PHASE 1: MASTER TEMPLATE</strong>
+                            Generate master layout template (header, responsive navigation bar, footer, shared styling) first.
+                          </div>
+                          <div className="border border-[#000000] p-2 bg-[#FAFAFA]">
+                            <strong className="text-[#DE2626] block mb-1">PHASE 2: CHILD PAGE DERIVATION</strong>
+                            Derive child page tasks (Index, Feed, Features, About, Contact) directly off the generated master shell.
+                          </div>
+                          <div className="border border-[#000000] p-2 bg-[#FAFAFA]">
+                            <strong className="text-[#DE2626] block mb-1">PHASE 3: NAV LINK AUDIT GATE</strong>
+                            Conclude with an automated Navigation Integrity Audit task verifying 100% route validity across all generated pages.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 2: How the Application Works */}
+                  <div className="space-y-3 pt-2">
+                    <div className="border-b-2 border-[#000000] pb-1 flex items-center justify-between">
+                      <h4 className="font-extrabold text-xs uppercase tracking-wider text-[#DE2626] flex items-center gap-2">
+                        <span>PART 2:</span>
+                        <span>HOW THE APPLICATION WORKS (SYSTEM MODULES)</span>
+                      </h4>
+                      <span className="font-mono text-[10px] text-[#666666]">Core Execution Workflow</span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {/* Module 1 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">1. Jobs &amp; Registry Hub</span>
+                          <span className="font-mono text-[10px] bg-[#000000] text-[#FFFFFF] px-1.5 py-0.5">DISK &amp; SCHEMA STORAGE</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Serves as the central job repository. Users can load registered jobs from disk, save active edits, or import custom BEJSON 104a files. All loaded jobs initialize active task sequences and target script configurations.
+                        </p>
+                      </div>
+
+                      {/* Module 2 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">2. Self-Evolving Stage Runner &amp; Diff Review</span>
+                          <span className="font-mono text-[10px] bg-[#DE2626] text-[#FFFFFF] px-1.5 py-0.5">CORE RUNNER ENGINE</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Executes pending tasks sequentially. For each task, the runner constructs an AI prompt containing task details, read-only context files, and active work attachments, dispatches to Gemini (<code className="bg-[#EEEEEE] px-1 font-mono text-[#000000]">gemini-3.6-flash</code>), verifies candidate code against AST syntax gates, presents a color-coded unified diff modal, and performs an atomic file swap or rollback upon approval.
+                        </p>
+                      </div>
+
+                      {/* Module 3 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">3. AI Job Document Generator</span>
+                          <span className="font-mono text-[10px] bg-[#000000] text-[#FFFFFF] px-1.5 py-0.5">SYNTHESIS ENGINE</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Accepts natural language requirements and synthesizes fully-structured BEJSON 104a job documents. Includes built-in quick templates (Website Plan with Nav Link Audit, Python AST Gate, etc.) and auto-loads generated jobs directly into the editor upon validation.
+                        </p>
+                      </div>
+
+                      {/* Module 4 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">4. Dual Attachment &amp; Read-Only Context Panels</span>
+                          <span className="font-mono text-[10px] bg-[#000000] text-[#FFFFFF] px-1.5 py-0.5">FILE INGESTION</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Provides two distinct file ingestion modes: <strong>Read-Only Context Files</strong> (ingested purely for AI study/learning, never modified) and <strong>Work Attachments</strong> (target transformation files). Supports single file import, directory trees, and <code className="bg-[#EEEEEE] px-1 font-mono text-[#000000]">.zip</code> archive extraction via JSZip.
+                        </p>
+                      </div>
+
+                      {/* Module 5 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">5. Key Store &amp; Round-Robin Load Distribution</span>
+                          <span className="font-mono text-[10px] bg-[#000000] text-[#FFFFFF] px-1.5 py-0.5">CREDENTIAL SECURITY</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Stores up to 20 local API key slots in browser localStorage. Executes round-robin rotation across active populated slots to ensure rate limits are distributed evenly without persistent backend storage.
+                        </p>
+                      </div>
+
+                      {/* Module 6 */}
+                      <div className="border border-[#000000] p-3 bg-[#FFFFFF] space-y-1">
+                        <div className="font-bold text-xs text-[#000000] flex items-center justify-between">
+                          <span className="uppercase">6. Autonomous System Console &amp; Debug Ledger</span>
+                          <span className="font-mono text-[10px] bg-[#000000] text-[#FFFFFF] px-1.5 py-0.5">TELEMETRY &amp; LOGS</span>
+                        </div>
+                        <p className="text-[11px] text-[#444444]">
+                          Logs every stage evolution, diff review, atomic commit, and API payload in real time. Features level filtering, search, detailed payload inspectors, and a 1-click <strong>Copy Full Debug Log</strong> button for instant debugging reports.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Dual-Language Architecture Parity */}
+                  <div className="border border-[#000000] bg-[#FAFAFA] p-3 space-y-1">
+                    <div className="font-bold text-xs uppercase text-[#000000]">
+                      DUAL-LANGUAGE ARCHITECTURE &amp; PARITY GUARANTEE
+                    </div>
+                    <p className="text-[11px] text-[#444444]">
+                      This system is built with 100% feature parity across both the React application (<code className="bg-[#EEEEEE] px-1 font-mono">src/App.tsx</code>) and the standalone Vanilla JavaScript mirror (<code className="bg-[#EEEEEE] px-1 font-mono">js/app.js</code> / <code className="bg-[#EEEEEE] px-1 font-mono">js/index.html</code>), resolving mirrored libraries relatively from <code className="bg-[#EEEEEE] px-1 font-mono">src/lib/lib_js/</code> with zero Node runtime dependencies in browser space.
+                    </p>
                   </div>
                 </div>
               )}
