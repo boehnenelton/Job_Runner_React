@@ -1,14 +1,21 @@
 /**
  * Library:         lib_bejson_Core_mfdb_validators.ts
  * Family:          Core
- * Module Purpose:  Implements runtime functionality and logic for lib_bejson_Core_mfdb_validators.ts.
- * Architecture:    MFDB provides multi-file database federation coordinating a 104a central manifest (104a.mfdb.bejson) with dense 104 entity tables, supporting atomic transaction locks and cross-disk relational foreign keys.
- * Version:         2.1.0
+ * Module Purpose:  MFDB validators: discoverRole, validateManifest, validateEntityFile, validateDatabase, plus manifest/meta decoding.
+ * Architecture:    MFDB (a database architecture layered on BEJSON, not a BEJSON format version): one BEJSON 104a manifest (104a.mfdb.bejson, Records_Type ["mfdb"]) registers many BEJSON 104 entity files, one entity per file, dense records, each with Parent_Hierarchy pointing back to the manifest. It is not 104db and uses no null-padding.
+ * Format_Scope:    MFDB only (104a manifest + 104 entity files; NOT 104db)
+ * Glossary:        BEJSON 104, 104a and 104db are the three file formats (Format_Version). 104db = ONE file holding 2+ entity types
+ *                  (Record_Type_Parent discriminator, null-padding). MFDB is NOT a format and NOT 104db: it is a layer made of one 104a manifest
+ *                  (104a.mfdb.bejson) plus dense 104 entity files linked by Parent_Hierarchy. MFDB-132 = an MFDB packed into one Chunked-104a document.
+ * Version:         2.3.0
  * Release_Version: 300
- * Date:            2026-07-13
+ * Date:            2026-10-30
+ * Changelog:
+ *   2.3.0 - 2026-10-30: Network_Role validation; empty entity_name/file_path rejected (41); absolute/escaping file_path rejected; root-escaping Parent_Hierarchy reports [38] only; orphan reports [37] when resolvedPaths is supplied.
+ * Changelog:       2.2.0 - Level 2 bidirectional check is now a HARD error (code 38): Parent_Hierarchy resolved from the entity's directory must land on the manifest (exact match when manifestRelativePath is given, otherwise a root-level *.mfdb.bejson). Was a warning.
  * Author:          Elton Boehnen · boehnenelton2024@gmail.com · boehnenelton2024.pages.dev · github.com/boehnenelton
  * Format_Creator:  Elton Boehnen
- * RELATIONAL_ID:   4f430045-e128-4f5a-bdd5-98cc97a6d08e
+ * RELATIONAL_ID:   552e4d91-dc1a-4fc7-87b4-b9dc92618e2b
  */
 
 import {
@@ -25,6 +32,13 @@ import {
 import { validateDocument as validateBEJSON } from "./lib_bejson_Core_bejson_validators";
 import { _emitError, _emitWarning, _makeResult } from "./lib_bejson_Core_bejson_validators";
 
+// ---------------------------------------------------------------------------
+// Discovery algorithm
+// ---------------------------------------------------------------------------
+
+/**
+ * Classifies a document's MFDB role: manifest (104a, Records_Type ["mfdb"]), entity (104 with Parent_Hierarchy) or standalone (anything else, including a 104db document).
+ */
 export function discoverRole(doc: unknown, filename: string): MFDBFileRole {
   if (doc === null || doc === undefined || typeof doc !== "object" || Array.isArray(doc)) {
     return "standalone";
@@ -39,14 +53,23 @@ export function discoverRole(doc: unknown, filename: string): MFDBFileRole {
   return "standalone";
 }
 
+// ---------------------------------------------------------------------------
+// Level 1 — Manifest validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Level 1: manifest rules -- 104a, Records_Type ["mfdb"], required MFDB headers and manifest fields. Not a 104db rule set.
+ */
 export function validateManifest(
   doc: unknown,
   options: {
+    
     resolvedPaths?: Set<string>;
   } = {}
 ): ValidationResult {
   const r = _makeResult();
 
+  // Must be valid BEJSON 104a
   const bejsonResult = validateBEJSON(doc);
   if (!bejsonResult.valid) {
     for (const e of bejsonResult.errors) {
@@ -62,6 +85,7 @@ export function validateManifest(
     return r;
   }
 
+  // Records_Type must be exactly ["mfdb"]
   if (
     !Array.isArray(manifest.Records_Type) ||
     manifest.Records_Type.length !== 1 ||
@@ -70,6 +94,16 @@ export function validateManifest(
     _emitError(r, E.MANIFEST_RECORDS_TYPE_INVALID, "Manifest Records_Type must be exactly [\"mfdb\"].", "Records_Type");
   }
 
+  // Optional Network_Role header validation (Master | Slave | Standalone)
+  if (manifest["Network_Role"] !== undefined && manifest["Network_Role"] !== null) {
+    if (typeof manifest["Network_Role"] !== "string" || !["Master", "Slave", "Standalone"].includes(manifest["Network_Role"])) {
+      _emitError(r, E.NOT_A_MANIFEST,
+        "[" + E.NOT_A_MANIFEST + "] Invalid Network_Role: " + JSON.stringify(manifest["Network_Role"]) +
+        " (must be one of [\"Master\",\"Slave\",\"Standalone\"]).", "Network_Role");
+    }
+  }
+
+  // Required custom headers
   if (typeof manifest["MFDB_Version"] !== "string" || (manifest["MFDB_Version"] as string).trim() === "") {
     _emitError(r, MFDB_CORE_CODES.INVALID_MFDB_VERSION,
       "Manifest is missing required header MFDB_Version.", "MFDB_Version");
@@ -79,6 +113,7 @@ export function validateManifest(
       "Manifest is missing required header DB_Name.", "DB_Name");
   }
 
+  // entity_name and file_path field presence
   const fieldNames = manifest.Fields.map((f) => f.name);
   if (!fieldNames.includes("entity_name")) {
     _emitError(r, E.MISSING_REQUIRED_MANIFEST_FIELD, "Manifest Fields must include \"entity_name\".", "entity_name");
@@ -87,7 +122,7 @@ export function validateManifest(
     _emitError(r, E.MISSING_REQUIRED_MANIFEST_FIELD, "Manifest Fields must include \"file_path\".", "file_path");
   }
 
-  if (!r.valid) return r;
+  if (!r.valid) return r; // can't proceed without required fields
 
   const enIdx = fieldNames.indexOf("entity_name");
   const fpIdx = fieldNames.indexOf("file_path");
@@ -101,16 +136,18 @@ export function validateManifest(
     const entityName = row[enIdx];
     const filePath = row[fpIdx];
 
-    if (entityName === null) {
+    // Null checks
+    if (entityName === null || entityName === "") {
       _emitError(r, E.NULL_IN_REQUIRED_MANIFEST_FIELD,
-        "Values[" + i + "].entity_name must not be null.", "entity_name", i);
+        "Values[" + i + "].entity_name must not be null or empty.", "entity_name", i);
     }
-    if (filePath === null) {
+    if (filePath === null || filePath === "") {
       _emitError(r, E.NULL_IN_REQUIRED_MANIFEST_FIELD,
-        "Values[" + i + "].file_path must not be null.", "file_path", i);
+        "Values[" + i + "].file_path must not be null or empty.", "file_path", i);
     }
 
-    if (typeof entityName === "string") {
+    // Uniqueness
+    if (typeof entityName === "string" && entityName !== "") {
       if (seenNames.has(entityName)) {
         _emitError(r, E.DUPLICATE_ENTRY,
           "Duplicate entity_name: \"" + entityName + "\".", "entity_name", i);
@@ -118,7 +155,7 @@ export function validateManifest(
         seenNames.add(entityName);
       }
     }
-    if (typeof filePath === "string") {
+    if (typeof filePath === "string" && filePath !== "") {
       if (seenPaths.has(filePath)) {
         _emitError(r, E.DUPLICATE_ENTRY,
           "Duplicate file_path: \"" + filePath + "\".", "file_path", i);
@@ -126,6 +163,12 @@ export function validateManifest(
         seenPaths.add(filePath);
       }
 
+      if (_escapesRoot(filePath, 0)) {
+        _emitError(r, E.ENTITY_FILE_NOT_FOUND,
+          "[" + E.ENTITY_FILE_NOT_FOUND + "] Path escapes root: \"" + filePath + "\".", "file_path", i);
+      }
+
+      // File existence (optional — caller must provide resolvedPaths)
       if (options.resolvedPaths && !options.resolvedPaths.has(filePath)) {
         _emitError(r, E.ENTITY_FILE_NOT_FOUND,
           "file_path \"" + filePath + "\" does not exist on disk.", "file_path", i);
@@ -136,19 +179,35 @@ export function validateManifest(
   return r;
 }
 
+// ---------------------------------------------------------------------------
+// Level 2 — Entity file validation
+// ---------------------------------------------------------------------------
+
 export interface EntityValidationOptions {
+  
   expectedEntityName: string;
+  
   expectedParentHierarchy?: string;
+  
   manifestRelativePath?: string;
+  
   entityRelativePath?: string;
+
+  /** Relative paths known to exist on disk (same set validateManifest uses). With it, a Parent_Hierarchy target that
+   *  is not the manifest and not in this set is reported as [37] (orphan) instead of [38]. */
+  resolvedPaths?: Set<string>;
 }
 
+/**
+ * Level 2: entity-file rules -- BEJSON 104, one Records_Type, Parent_Hierarchy present (and not escaping the MFDB root). No Record_Type_Parent column, no null-padding.
+ */
 export function validateEntityFile(
   doc: unknown,
   options: EntityValidationOptions
 ): ValidationResult {
   const r = _makeResult();
 
+  // Must be valid BEJSON 104
   const bejsonResult = validateBEJSON(doc);
   if (!bejsonResult.valid) {
     for (const e of bejsonResult.errors) {
@@ -164,17 +223,20 @@ export function validateEntityFile(
     return r;
   }
 
+  // Parent_Hierarchy required
   if (!("Parent_Hierarchy" in entity) || entity.Parent_Hierarchy === undefined || entity.Parent_Hierarchy === null) {
     _emitError(r, E.MISSING_PARENT_HIERARCHY, "Entity file must contain Parent_Hierarchy key.", "Parent_Hierarchy");
   } else if (typeof entity.Parent_Hierarchy !== "string" || entity.Parent_Hierarchy.trim() === "") {
     _emitError(r, E.MISSING_PARENT_HIERARCHY, "Parent_Hierarchy must be a non-empty string.", "Parent_Hierarchy");
   }
 
+  // Records_Type must be exactly one string
   if (!Array.isArray(entity.Records_Type) || entity.Records_Type.length !== 1) {
     _emitError(r, E.NOT_AN_ENTITY, "Entity file Records_Type must contain exactly one entry.", "Records_Type");
     return r;
   }
 
+  // Records_Type[0] must match the registered entity_name (case-sensitive)
   const actualName = entity.Records_Type[0];
   if (actualName !== options.expectedEntityName) {
     _emitError(r, E.ENTITY_NAME_MISMATCH,
@@ -182,6 +244,7 @@ export function validateEntityFile(
       "Records_Type");
   }
 
+  // Parent_Hierarchy path check (if caller provided expected value)
   if (
     options.expectedParentHierarchy !== undefined &&
     typeof entity.Parent_Hierarchy === "string" &&
@@ -192,38 +255,66 @@ export function validateEntityFile(
       "Parent_Hierarchy");
   }
 
-  if (options.entityRelativePath !== undefined && options.manifestRelativePath !== undefined) {
-    if (typeof entity.Parent_Hierarchy === "string") {
-      _emitWarning(r, E.BIDIRECTIONAL_PATH_FAILED,
-        "Bidirectional path check: verify that \"" + options.entityRelativePath +
-        "\" + Parent_Hierarchy \"" + entity.Parent_Hierarchy +
-        "\" resolves to manifest at \"" + options.manifestRelativePath + "\".",
+  // Bidirectional check (hard error, code 38): Parent_Hierarchy is relative to the entity file's own
+  // directory; resolved against entityRelativePath it must land on the manifest. With manifestRelativePath
+  // the match is exact; without it the target must be a root-level "*.mfdb.bejson".
+  if (options.entityRelativePath !== undefined && typeof entity.Parent_Hierarchy === "string") {
+    const resolvedPh = _posixResolve(options.entityRelativePath, entity.Parent_Hierarchy);
+    const manifestRel = options.manifestRelativePath;
+    const lands = manifestRel !== undefined
+      ? resolvedPh === _posixResolve("x", manifestRel).replace(/^\.\//, "")
+      : (resolvedPh.indexOf("/") === -1 && /\.mfdb\.bejson$/.test(resolvedPh));
+    const phStr = entity.Parent_Hierarchy as string;
+    const phEscapes = _escapesRoot(phStr, Math.max(options.entityRelativePath.replace(/\\/g, "/").split("/").filter((x) => x !== "" && x !== ".").length - 1, 0));
+    if (!lands && !phEscapes && options.resolvedPaths !== undefined && !options.resolvedPaths.has(resolvedPh)) {
+      _emitError(r, E.MANIFEST_FILE_NOT_FOUND,
+        "[" + E.MANIFEST_FILE_NOT_FOUND + "] Manifest not found at \"" + resolvedPh + "\" (orphan entity).", "Parent_Hierarchy");
+    } else if (!lands || phEscapes) {
+      _emitError(r, E.BIDIRECTIONAL_PATH_FAILED,
+        "[" + E.BIDIRECTIONAL_PATH_FAILED + "] Bidirectional check failed: Parent_Hierarchy \"" + entity.Parent_Hierarchy +
+        "\" from \"" + options.entityRelativePath + "\" resolves to \"" + resolvedPh + "\", which is not the manifest" +
+        (manifestRel !== undefined ? " \"" + manifestRel + "\"" : "") + ".",
         "Parent_Hierarchy");
     }
   }
 
-  if (typeof entity.Parent_Hierarchy === "string") {
-    if (entity.Parent_Hierarchy.includes("..") && _escapesRoot(entity.Parent_Hierarchy)) {
-      _emitError(r, E.MISSING_PARENT_HIERARCHY,
-        "Parent_Hierarchy must not escape the database root directory.", "Parent_Hierarchy");
+  // No path escaping. With entityRelativePath the escape is reported above as [38]; without it (standalone call)
+  // it is reported here, coded 38 as well (it cannot be the listing manifest).
+  if (typeof entity.Parent_Hierarchy === "string" && options.entityRelativePath === undefined) {
+    if (_escapesRoot(entity.Parent_Hierarchy, 1)) {
+      _emitError(r, E.BIDIRECTIONAL_PATH_FAILED,
+        "[" + E.BIDIRECTIONAL_PATH_FAILED + "] Parent_Hierarchy must not escape the database root directory.", "Parent_Hierarchy");
     }
   }
 
   return r;
 }
 
+// ---------------------------------------------------------------------------
+// Level 3 — Database-wide validation
+// ---------------------------------------------------------------------------
+
 export interface DatabaseValidationOptions {
+  
   strict?: boolean;
+  
   resolvedPaths?: Set<string>;
+
+  /** Manifest path relative to the DB root (default: any root-level *.mfdb.bejson). */
+  manifestRelativePath?: string;
 }
 
+/**
+ * Level 3: whole-MFDB rules -- every registered entity present and valid, record_count accuracy and *_fk conventions. Structural failures are errors; convention failures are warnings.
+ */
 export function validateDatabase(
   manifest: unknown,
-  entityDocs?: Map<string, unknown>,
+  entityDocs: Map<string, unknown>,
   options: DatabaseValidationOptions = {}
 ): ValidationResult {
   const r = _makeResult();
 
+  // Level 1
   const l1 = validateManifest(manifest, { resolvedPaths: options.resolvedPaths });
   for (const e of l1.errors) _emitError(r, e.code, "[L1] " + e.message, e.field, e.recordIndex);
   for (const w of l1.warnings) _emitWarning(r, w.code, "[L1] " + w.message, w.field, w.recordIndex);
@@ -232,30 +323,41 @@ export function validateDatabase(
   const manifestDoc = manifest as BEJSONDocument;
   const records = decodeManifestRecords(manifestDoc);
 
-  if (entityDocs) {
-    for (const record of records) {
-      const entityDoc = entityDocs.get(record.file_path);
-      if (!entityDoc) {
-        _emitError(r, E.ENTITY_FILE_NOT_FOUND,
-          "[L2] Entity document not provided for file_path \"" + record.file_path + "\".", "file_path");
-        continue;
-      }
-
-      const l2 = validateEntityFile(entityDoc, {
-        expectedEntityName: record.entity_name,
-        entityRelativePath: record.file_path,
-      });
-      for (const e of l2.errors) _emitError(r, e.code, "[L2:" + record.entity_name + "] " + e.message, e.field, e.recordIndex);
-      for (const w of l2.warnings) _emitWarning(r, w.code, "[L2:" + record.entity_name + "] " + w.message, w.field, w.recordIndex);
+  // Level 2 — per entity
+  for (const record of records) {
+    const entityDoc = entityDocs.get(record.file_path);
+    if (!entityDoc) {
+      _emitError(r, E.ENTITY_FILE_NOT_FOUND,
+        "[L2] Entity document not provided for file_path \"" + record.file_path + "\".", "file_path");
+      continue;
     }
 
-    _checkRecordCounts(manifestDoc, records, entityDocs, r);
-    _checkFKResolution(records, entityDocs, options.strict === true, r);
+    const l2 = validateEntityFile(entityDoc, {
+      expectedEntityName: record.entity_name,
+      entityRelativePath: record.file_path,
+      manifestRelativePath: options.manifestRelativePath,
+      resolvedPaths: options.resolvedPaths,
+    });
+    for (const e of l2.errors) _emitError(r, e.code, "[L2:" + record.entity_name + "] " + e.message, e.field, e.recordIndex);
+    for (const w of l2.warnings) _emitWarning(r, w.code, "[L2:" + record.entity_name + "] " + w.message, w.field, w.recordIndex);
   }
+
+  // Level 3 — record_count advisory check + FK resolution (warnings only unless strict)
+  // Runs unconditionally: L3 findings are reported even when L1/L2 failed. Safe because `valid` starts true
+  // and _err()/_warn() only ever set it false, so L3 can add findings but never reverse an invalid result.
+  _checkRecordCounts(manifestDoc, records, entityDocs, r);
+  _checkFKResolution(records, entityDocs, options.strict === true, r);
 
   return r;
 }
 
+// ---------------------------------------------------------------------------
+// Helper — decode manifest Values into MFDBManifestRecord objects
+// ---------------------------------------------------------------------------
+
+/**
+ * Turns manifest Values into typed entity-row objects.
+ */
 export function decodeManifestRecords(manifest: BEJSONDocument): MFDBManifestRecord[] {
   const fieldNames = manifest.Fields.map((f) => f.name);
   return manifest.Values.map((row) => {
@@ -274,6 +376,9 @@ export function decodeManifestRecords(manifest: BEJSONDocument): MFDBManifestRec
   });
 }
 
+/**
+ * Reads the manifest headers (MFDB_Version, DB_Name, Network_Role, ...) into a typed object.
+ */
 export function decodeDatabaseMeta(manifest: BEJSONDocument): MFDBDatabaseMeta {
   return {
     mfdb_version: (manifest["MFDB_Version"] as string) ?? "",
@@ -285,6 +390,13 @@ export function decodeDatabaseMeta(manifest: BEJSONDocument): MFDBDatabaseMeta {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Level 3 sub-checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Compares each manifest record_count with the real row count of its entity file.
+ */
 function _checkRecordCounts(
   manifestDoc: BEJSONDocument,
   records: MFDBManifestRecord[],
@@ -292,7 +404,7 @@ function _checkRecordCounts(
   r: ValidationResult
 ): void {
   const rcIdx = manifestDoc.Fields.findIndex((f) => f.name === "record_count");
-  if (rcIdx === -1) return;
+  if (rcIdx === -1) return; // field not declared — skip
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
@@ -311,19 +423,24 @@ function _checkRecordCounts(
   }
 }
 
+/**
+ * Checks *_fk values resolve to rows of the referenced entity. MFDB does not enforce foreign keys; unresolved values are reported (warning unless strict).
+ */
 function _checkFKResolution(
   records: MFDBManifestRecord[],
   entityDocs: Map<string, unknown>,
   strict: boolean,
   r: ValidationResult
 ): void {
-  const pkMap = new Map<string, string>();
+  // Build a map of primary_key field names to entity names
+  const pkMap = new Map<string, string>(); // pk_field → entity_name
   for (const rec of records) {
     if (rec.primary_key) {
       pkMap.set(rec.primary_key, rec.entity_name);
     }
   }
 
+  // For each entity, find FK fields (ending in _fk) and try to resolve them
   for (const rec of records) {
     const entityDoc = entityDocs.get(rec.file_path) as BEJSONDocument | undefined;
     if (!entityDoc) continue;
@@ -331,7 +448,8 @@ function _checkFKResolution(
     for (const field of entityDoc.Fields) {
       if (!field.name.endsWith("_fk")) continue;
 
-      const expectedPK = field.name.slice(0, -3);
+      // Derive expected PK field name: strip _fk suffix
+      const expectedPK = field.name.slice(0, -3); // e.g. user_id_fk → user_id
       if (!pkMap.has(expectedPK)) {
         const msg = "[L3] FK field \"" + field.name + "\" in entity \"" + rec.entity_name +
           "\" cannot resolve to any manifest primary_key \"" + expectedPK + "\".";
@@ -345,9 +463,31 @@ function _checkFKResolution(
   }
 }
 
-function _escapesRoot(relPath: string): boolean {
-  const parts = relPath.replace(/\\/g, "/").split("/");
-  let depth = 0;
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+
+/**
+ * True if a relative path (Parent_Hierarchy or file_path) climbs above the MFDB root.
+ */
+/** Resolve `rel` against the directory of `fromFile` (both posix-style, DB-root-relative); returns a normalized path ("../x" if it climbs above the root). */
+function _posixResolve(fromFile: string, rel: string): string {
+  const base = fromFile.replace(/\\/g, "/").split("/").filter((x) => x !== "" && x !== ".");
+  base.pop(); // drop the file name -> its directory
+  for (const part of rel.replace(/\\/g, "/").split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") { if (base.length && base[base.length - 1] !== "..") base.pop(); else base.push(".."); }
+    else base.push(part);
+  }
+  return base.join("/");
+}
+
+function _escapesRoot(relPath: string, startDepth = 0): boolean {
+  const norm = relPath.replace(/\\/g, "/");
+  // Absolute paths (POSIX root or a Windows drive letter) are outside the MFDB root by definition.
+  if (norm.startsWith("/") || /^[A-Za-z]:/.test(norm)) return true;
+  const parts = norm.split("/");
+  let depth = startDepth;
   for (const part of parts) {
     if (part === "..") {
       depth--;
@@ -358,6 +498,13 @@ function _escapesRoot(relPath: string): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// MFDB 1.32 chunked-package validation
+// ---------------------------------------------------------------------------
+// The chunking library owns createMfdb132Package/unchunkMfdb132Package (packaging and IO) and calls these
+// functions for validation; validation logic lives in the validator family. Local, loosely-typed field-map
+// shapes are used instead of importing ChunkedDocument, to avoid a circular import (chunking <-> validator).
 
 const MFDB_MANIFEST_FILENAME = "104a.mfdb.bejson";
 
@@ -402,6 +549,9 @@ export interface MfdbInChunkDetection {
   warnings: string[];
 }
 
+/**
+ * True if a Chunked-104a document is a packaged MFDB-132.
+ */
 export function isMfdb132Package(doc: MfdbChunkedDoc): boolean {
   return (
     doc.Format_Version === "104a" &&
@@ -412,6 +562,9 @@ export function isMfdb132Package(doc: MfdbChunkedDoc): boolean {
   );
 }
 
+/**
+ * Level-1 validation of an MFDB-132 package document.
+ */
 export function validateMfdb132Package(doc: MfdbChunkedDoc): MfdbPackageValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -450,6 +603,9 @@ export function validateMfdb132Package(doc: MfdbChunkedDoc): MfdbPackageValidati
   return { valid: errors.length === 0, errors, warnings };
 }
 
+/**
+ * Finds the chunk-document row whose Relative_Path matches.
+ */
 function _findRowByRelPath(doc: MfdbChunkedDoc, relPath: string): any[] | null {
   const fields = doc.Fields || [];
   const fm: Record<string, number> = {};
@@ -462,6 +618,9 @@ function _findRowByRelPath(doc: MfdbChunkedDoc, relPath: string): any[] | null {
   return null;
 }
 
+/**
+ * Finds and validates an MFDB embedded in any Chunked-104a document.
+ */
 export function detectMfdbInChunk(doc: MfdbChunkedDoc): MfdbInChunkDetection {
   const result: MfdbInChunkDetection = {
     mfdb_detected: false,

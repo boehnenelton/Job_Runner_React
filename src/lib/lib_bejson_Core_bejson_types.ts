@@ -1,14 +1,21 @@
 /**
  * Library:         lib_bejson_Core_bejson_types.ts
  * Family:          Core
- * Module Purpose:  Implements runtime functionality and logic for lib_bejson_Core_bejson_types.ts.
- * Architecture:    Nested BEJSON 104 embeds tabular structures inside parent cell strings using implicit physical coordinates NestAddress(parent_fp, row, col, depth) without synthetic foreign key fields.
- * Version:         2.4.0
+ * Module Purpose:  Shared type definitions (document, field, MFDB manifest records) and the BEJSON/MFDB error classes.
+ * Architecture:    Format-level BEJSON layer that works on any BEJSON document (104, 104a, 104db) through positional Fields/Values and the field-map cache. It does not orchestrate MFDB and is not specific to 104db.
+ * Format_Scope:    104 | 104a | 104db types + MFDB manifest types
+ * Glossary:        BEJSON 104, 104a and 104db are the three file formats (Format_Version). 104db = ONE file holding 2+ entity types
+ *                  (Record_Type_Parent discriminator, null-padding). MFDB is NOT a format and NOT 104db: it is a layer made of one 104a manifest
+ *                  (104a.mfdb.bejson) plus dense 104 entity files linked by Parent_Hierarchy. MFDB-132 = an MFDB packed into one Chunked-104a document.
+ * Version:         2.5.0
  * Release_Version: 300
- * Date:            2026-07-18
+ * Date:            2026-10-16
  * Author:          Elton Boehnen · boehnenelton2024@gmail.com · boehnenelton2024.pages.dev · github.com/boehnenelton
  * Format_Creator:  Elton Boehnen
- * RELATIONAL_ID:   0f4e7a2c-3b8d-4e5f-a1c6-2d9e7f3a4b50
+ * RELATIONAL_ID:   d61dafd1-233a-47af-a205-bf5d1fbfb859
+ * Changelog:
+ *   2.5.0 (2026-10-16) - Added CORE_NESTING_ERRORS (E_NESTING_*, 130-139), moved here from the removed lib_bejson_Core_bejson_nesting_errors.ts.
+ *           Core now resolves every error code through this file. Codes, names and values unchanged.
  */
 
 // ---------------------------------------------------------------------------
@@ -102,6 +109,7 @@ export interface MFDBDatabaseMeta {
   schema_version?: string;
   author?: string;
   created_at?: string;
+  network_role?: "Master" | "Slave" | "Standalone";
 }
 
 export type MFDBFileRole = "manifest" | "entity" | "standalone";
@@ -112,6 +120,9 @@ export type MFDBFileRole = "manifest" | "entity" | "standalone";
 
 export class BEJSONValidationError extends Error {
   public readonly code: number;
+  /**
+   * BEJSONValidationError: raised by the validators; carries a numeric code.
+   */
   constructor(code: number, message: string) {
     super(message);
     this.name = "BEJSONValidationError";
@@ -121,6 +132,9 @@ export class BEJSONValidationError extends Error {
 
 export class BEJSONCoreError extends Error {
   public readonly code: number;
+  /**
+   * BEJSONCoreError: raised by core operations; carries a numeric code.
+   */
   constructor(code: number, message: string) {
     super(message);
     this.name = "BEJSONCoreError";
@@ -130,6 +144,9 @@ export class BEJSONCoreError extends Error {
 
 export class MFDBValidationError extends Error {
   public readonly code: number;
+  /**
+   * MFDBValidationError: raised by the MFDB validators (manifest / entity / database rules).
+   */
   constructor(code: number, message: string) {
     super(message);
     this.name = "MFDBValidationError";
@@ -139,6 +156,9 @@ export class MFDBValidationError extends Error {
 
 export class MFDBCoreError extends Error {
   public readonly code: number;
+  /**
+   * MFDBCoreError: raised by MFDB-layer operations (manifest, entity registration, federation, debug).
+   */
   constructor(code: number, message: string) {
     super(message);
     this.name = "MFDBCoreError";
@@ -215,7 +235,7 @@ export const BEJSON_CORE_CODES = {
   
   DECRYPTION_FAILED: 29,
   
-  // Extended core codes (JS-only in errors.js; now unified in TS)
+  // Extended core codes (same codes as errors.js)
   PARSE_ERROR: 17,
   SERIALIZATION_ERROR: 18,
   NULL_DOCUMENT: 19,
@@ -290,3 +310,20 @@ export const MFDB_CORE_CODES = {
   INVALID_MFDB_VERSION: 4,        // alias: maps to INVALID_FORMAT_VERSION
   MISSING_DB_NAME: 2,             // alias: maps to MISSING_MANDATORY_KEY
 } as const;
+
+// Core nesting (130-159) - nested BEJSON 104; part of Core, resolved here (no separate nesting errors file).
+export const CORE_NESTING_ERRORS = {
+  E_NESTING_INVALID_CELL:       130,
+  E_NESTING_NOT_BEJSON:         131,
+  E_NESTING_DEPTH_EXCEEDED:     132,
+  E_NESTING_CACHE_MISS:         133,
+  E_NESTING_SCHEMA_MISMATCH:    134,
+  E_NESTING_CIRCULAR_REF:       135,
+  E_NESTING_VALIDATION_FAILED:  136,
+  E_NESTING_FIELD_MAP_FAILED:   137,
+  E_NESTING_QUERY_INVALID_PATH: 138,
+  E_NESTING_QUERY_EMPTY_PATH:   139,
+  // 140-159 reserved for future Core nesting codes.
+} as const;
+
+export type CoreNestingErrorCode = typeof CORE_NESTING_ERRORS[keyof typeof CORE_NESTING_ERRORS];

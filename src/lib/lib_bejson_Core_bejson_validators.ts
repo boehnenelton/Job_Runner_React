@@ -1,13 +1,18 @@
 /**
  * Library:         lib_bejson_Core_bejson_validators.ts
  * Family:          Core
- * Module Purpose:  Implements runtime functionality and logic for lib_bejson_Core_bejson_validators.ts.
- * Architecture:    BEJSON 104db provides single-file multi-entity relational storage with positional null-padding, Record_Type_Parent discriminator headers, and plain-text LLM readability.\n * Version:         2.0.2
+ * Module Purpose:  Structural validators validate104 / validate104a / validate104db plus validateDocument dispatch. MFDB rules live in mfdb_validators.
+ * Architecture:    Format-level BEJSON layer that works on any BEJSON document (104, 104a, 104db) through positional Fields/Values and the field-map cache. It does not orchestrate MFDB and is not specific to 104db.
+ * Format_Scope:    104 | 104a | 104db (generic)
+ * Glossary:        BEJSON 104, 104a and 104db are the three file formats (Format_Version). 104db = ONE file holding 2+ entity types
+ *                  (Record_Type_Parent discriminator, null-padding). MFDB is NOT a format and NOT 104db: it is a layer made of one 104a manifest
+ *                  (104a.mfdb.bejson) plus dense 104 entity files linked by Parent_Hierarchy. MFDB-132 = an MFDB packed into one Chunked-104a document.
+ * Version:         2.0.6
  * Release_Version: 300
- * Date:            2026-05-18
+ * Date:            2026-10-16
  * Author:          Elton Boehnen · boehnenelton2024@gmail.com · boehnenelton2024.pages.dev · github.com/boehnenelton
  * Format_Creator:  Elton Boehnen
- * RELATIONAL_ID:   8f556cb9-1388-46d9-af64-10ad2deceaed
+ * RELATIONAL_ID:   17fafcf6-5c1d-4ba4-a11a-c92223f26ebf
  */
 
 import {
@@ -27,6 +32,39 @@ import {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Dispatches on Format_Version to validate104 / validate104a / validate104db. Structure rules only; MFDB rules are in mfdb_validators.
+ */
+const FIELD_MAP_KEY = "_bejson_field_map";
+/** Other in-memory caches. validateDocument takes live objects, so these are the only `_` keys accepted; any other `_` key is rejected. */
+const IN_MEMORY_ONLY_KEYS: ReadonlySet<string> = new Set(["_nestingFieldMap"]);
+
+/**
+ * The field-map cache is an in-memory artifact. This validator receives parsed objects (it cannot tell whether
+ * the object came from disk), so it accepts the key only when it equals the map derived from Fields (harmless,
+ * because the cache guard rebuilds anything it did not build itself) and rejects any other value as forged.
+ */
+function _checkFieldMapCache(d: Record<string, unknown>, r: ValidationResult): void {
+  if (!(FIELD_MAP_KEY in d)) return;
+  const cached = d[FIELD_MAP_KEY];
+  const fields = Array.isArray(d.Fields) ? (d.Fields as Array<{ name?: unknown }>) : [];
+  const ok = cached !== null && typeof cached === "object" && !Array.isArray(cached)
+    && Object.keys(cached as object).length === fields.length
+    && fields.every((f, i) => !!f && (cached as Record<string, unknown>)[String(f.name)] === i);
+  if (!ok) {
+    _err(r, E.RESERVED_KEY_COLLISION, "In-memory \"" + FIELD_MAP_KEY + "\" does not match Fields (stale or forged).", FIELD_MAP_KEY);
+  }
+}
+
+/** Any `_`-prefixed top-level key other than the verified field map and the known in-memory caches is reserved and rejected (all versions). */
+function _checkReservedKeys(d: Record<string, unknown>, r: ValidationResult): void {
+  for (const key of Object.keys(d)) {
+    if (key.startsWith("_") && key !== FIELD_MAP_KEY && !IN_MEMORY_ONLY_KEYS.has(key)) {
+      _err(r, E.RESERVED_KEY_COLLISION, "Key \"" + key + "\" uses the reserved \"_\" prefix.", key);
+    }
+  }
+}
+
 export function validateDocument(doc: unknown): ValidationResult {
   const result = _makeResult();
 
@@ -41,6 +79,8 @@ export function validateDocument(doc: unknown): ValidationResult {
   // Step 2: mandatory keys
   _checkMandatoryKeys(d, result);
   if (!result.valid) return result; // can't proceed without the six keys
+  _checkFieldMapCache(d, result);
+  _checkReservedKeys(d, result);
 
   const bej = doc as BEJSONDocument;
 
@@ -71,6 +111,9 @@ export function validateDocument(doc: unknown): ValidationResult {
   return result;
 }
 
+/**
+ * BEJSON 104: exactly ONE Records_Type, no custom top-level keys (Parent_Hierarchy allowed), primitive and array/object field types. Also the rule set for MFDB entity files.
+ */
 export function validate104(doc: unknown): ValidationResult {
   const result = validateDocument(doc);
   if (result.valid) {
@@ -82,6 +125,9 @@ export function validate104(doc: unknown): ValidationResult {
   return result;
 }
 
+/**
+ * BEJSON 104a: exactly ONE Records_Type, custom top-level headers allowed (metadata), no array/object field types. Also the rule set for the MFDB manifest.
+ */
 export function validate104a(doc: unknown): ValidationResult {
   const result = validateDocument(doc);
   if (result.valid) {
@@ -93,6 +139,9 @@ export function validate104a(doc: unknown): ValidationResult {
   return result;
 }
 
+/**
+ * BEJSON 104db: TWO or more Records_Type, Record_Type_Parent as first field, every other field owned by an entity through Record_Type_Parent, null-padding for non-owned cells. One file, several entities; not MFDB.
+ */
 export function validate104db(doc: unknown): ValidationResult {
   const result = validateDocument(doc);
   if (result.valid) {
@@ -104,6 +153,9 @@ export function validate104db(doc: unknown): ValidationResult {
   return result;
 }
 
+/**
+ * Validates and throws BEJSONValidationError on the first error.
+ */
 export function assertValid(doc: unknown): void {
   const result = validateDocument(doc);
   if (!result.valid && result.errors.length > 0) {
@@ -112,6 +164,9 @@ export function assertValid(doc: unknown): void {
   }
 }
 
+/**
+ * Boolean shortcut for validateDocument(...).valid.
+ */
 export function isValid(doc: unknown): boolean {
   return validateDocument(doc).valid;
 }
@@ -122,6 +177,9 @@ export function isValid(doc: unknown): boolean {
 
 const MANDATORY_KEYS = ["Format", "Format_Version", "Format_Creator", "Records_Type", "Fields", "Values"] as const;
 
+/**
+ * The six mandatory keys (Format, Format_Version, Format_Creator, Records_Type, Fields, Values) must exist.
+ */
 function _checkMandatoryKeys(d: Record<string, unknown>, r: ValidationResult): void {
   for (const key of MANDATORY_KEYS) {
     if (!(key in d) || d[key] === undefined) {
@@ -134,6 +192,10 @@ function _checkMandatoryKeys(d: Record<string, unknown>, r: ValidationResult): v
 // Step 3 — top-level value constraints
 // ---------------------------------------------------------------------------
 
+/**
+ * Format must be 'BEJSON'; Format_Version one of 104/104a/104db; Format_Creator must be 'Elton Boehnen';
+ * Records_Type a non-empty array of non-empty strings.
+ */
 function _checkTopLevel(doc: BEJSONDocument, r: ValidationResult): void {
   if (doc.Format !== "BEJSON") {
     _err(r, E.INVALID_FORMAT_VALUE, "Format must be \"BEJSON\", got \"" + doc.Format + "\".", "Format");
@@ -166,6 +228,10 @@ function _checkTopLevel(doc: BEJSONDocument, r: ValidationResult): void {
 
 const VALID_TYPES: BEJSONFieldType[] = ["string", "integer", "number", "boolean", "array", "object"];
 
+/**
+ * Fields must be a non-empty array; every field is an object with a non-empty name and a valid lowercase type;
+ * field names must be unique.
+ */
 function _checkFields(doc: BEJSONDocument, r: ValidationResult): void {
   if (!Array.isArray(doc.Fields) || doc.Fields.length === 0) {
     _err(r, E.INVALID_FIELDS, "Fields must be a non-empty array.", "Fields");
@@ -198,6 +264,9 @@ function _checkFields(doc: BEJSONDocument, r: ValidationResult): void {
 // Step 5 — Values array
 // ---------------------------------------------------------------------------
 
+/**
+ * Every row has one cell per field and each non-null cell matches its field type (null is always allowed).
+ */
 function _checkValues(doc: BEJSONDocument, r: ValidationResult): void {
   if (!Array.isArray(doc.Values)) {
     _err(r, E.INVALID_VALUES_STRUCTURE, "Values must be an array.", "Values");
@@ -239,6 +308,10 @@ function _checkValues(doc: BEJSONDocument, r: ValidationResult): void {
 
 const FORBIDDEN_CUSTOM_KEYS_104 = new Set(MANDATORY_KEYS);
 
+/**
+ * 104-only rules: exactly one record type; no custom top-level keys (Parent_Hierarchy is the only extra key
+ * allowed, and must be a string).
+ */
 function _check104Specific(doc: BEJSONDocument, r: ValidationResult): void {
   // Single record type
   if (doc.Records_Type.length !== 1) {
@@ -247,7 +320,7 @@ function _check104Specific(doc: BEJSONDocument, r: ValidationResult): void {
 
   // No custom top-level keys (Parent_Hierarchy is the only exception)
   for (const key of Object.keys(doc)) {
-    if (!FORBIDDEN_CUSTOM_KEYS_104.has(key as typeof MANDATORY_KEYS[number]) && key !== "Parent_Hierarchy") {
+    if (!FORBIDDEN_CUSTOM_KEYS_104.has(key as typeof MANDATORY_KEYS[number]) && key !== "Parent_Hierarchy" && !key.startsWith("_")) {
       _err(r, E.FORBIDDEN_CUSTOM_KEY, "BEJSON 104 forbids custom top-level key: \"" + key + "\".", key);
     }
   }
@@ -265,6 +338,11 @@ function _check104Specific(doc: BEJSONDocument, r: ValidationResult): void {
 const PRIMITIVE_TYPES: BEJSONPrimitiveType[] = ["string", "integer", "number", "boolean"];
 const PASCAL_CASE_RE = /^[A-Z][A-Za-z0-9]*(_[A-Za-z0-9]+)*$/;
 
+/**
+ * 104a-only rules: exactly one record type; only primitive field types (string, integer, number, boolean --
+ * no array/object); custom top-level headers are allowed but must be PascalCase here (this TS validator
+ * reports a non-PascalCase header as an error; the PY and JS validators only recommend PascalCase).
+ */
 function _check104aSpecific(doc: BEJSONDocument, r: ValidationResult): void {
   // Single record type
   if (doc.Records_Type.length !== 1) {
@@ -283,7 +361,10 @@ function _check104aSpecific(doc: BEJSONDocument, r: ValidationResult): void {
   // Custom keys: must be PascalCase, must not collide with mandatory keys
   for (const key of Object.keys(doc)) {
     if (FORBIDDEN_CUSTOM_KEYS_104.has(key as typeof MANDATORY_KEYS[number])) continue;
+    if (key.startsWith("_")) continue; // checked by _checkFieldMapCache / _checkReservedKeys
     if (key === "Parent_Hierarchy") {
+      // Parent_Hierarchy is not defined for 104a but not strictly forbidden;
+      // emit a warning rather than an error since the spec is silent here.
       continue;
     }
     if (!PASCAL_CASE_RE.test(key)) {
@@ -297,6 +378,10 @@ function _check104aSpecific(doc: BEJSONDocument, r: ValidationResult): void {
 // Step 6c — 104db-specific rules
 // ---------------------------------------------------------------------------
 
+/**
+ * 104db-only rules: 2+ record types, no custom top-level keys, Record_Type_Parent as first field (type string),
+ * every other field owned by an entity through Record_Type_Parent, valid discriminator in column 0 of each row.
+ */
 function _check104dbSpecific(doc: BEJSONDocument, r: ValidationResult): void {
   // Two or more record types
   if (doc.Records_Type.length < 2) {
@@ -305,7 +390,7 @@ function _check104dbSpecific(doc: BEJSONDocument, r: ValidationResult): void {
 
   // No custom top-level keys (not even Parent_Hierarchy)
   for (const key of Object.keys(doc)) {
-    if (!FORBIDDEN_CUSTOM_KEYS_104.has(key as typeof MANDATORY_KEYS[number])) {
+    if (!FORBIDDEN_CUSTOM_KEYS_104.has(key as typeof MANDATORY_KEYS[number]) && !key.startsWith("_")) {
       _err(r, E.FORBIDDEN_CUSTOM_KEY, "BEJSON 104db forbids custom top-level key: \"" + key + "\".", key);
     }
   }
@@ -350,6 +435,9 @@ function _check104dbSpecific(doc: BEJSONDocument, r: ValidationResult): void {
 // Type matching helper
 // ---------------------------------------------------------------------------
 
+/**
+ * True when a cell value matches a field type (string, integer, number, boolean, array, object).
+ */
 function _typeMatches(val: unknown, type: BEJSONFieldType): boolean {
   if (val === null) return true;
   switch (type) {
@@ -374,10 +462,16 @@ function _typeMatches(val: unknown, type: BEJSONFieldType): boolean {
 // Result helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Creates an empty ValidationResult.
+ */
 function _makeResult(): ValidationResult {
   return { valid: true, errors: [], warnings: [] };
 }
 
+/**
+ * Adds an error and marks the result invalid.
+ */
 function _err(
   r: ValidationResult,
   code: number,
@@ -392,6 +486,9 @@ function _err(
   r.errors.push(e);
 }
 
+/**
+ * Adds a warning; the result stays valid.
+ */
 function _warn(
   r: ValidationResult,
   code: number,
@@ -405,4 +502,5 @@ function _warn(
   r.warnings.push(w);
 }
 
+// Export _warn so mfdb_validators can reuse the pattern
 export { _warn as _emitWarning, _err as _emitError, _makeResult };
